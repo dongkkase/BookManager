@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('viewerAPI', {
   openAudioQueueItem: (sessionId, fileName) => ipcRenderer.invoke('viewer:openAudioQueueItem', sessionId, fileName),
   listComicPages: sessionId => ipcRenderer.invoke('viewer:listComicPages', sessionId),
   getComicPage: (sessionId, entryName) => ipcRenderer.invoke('viewer:getComicPage', sessionId, entryName),
+    cancelComicPageRequest: (sessionId, requestId) => ipcRenderer.invoke('viewer:cancelComicPageRequest', sessionId, requestId),
   getDocumentData: sessionId => ipcRenderer.invoke('viewer:getDocumentData', sessionId),
   getAudioData: sessionId => ipcRenderer.invoke('viewer:getAudioData', sessionId),
   listAudioQueue: sessionId => ipcRenderer.invoke('viewer:listAudioQueue', sessionId),

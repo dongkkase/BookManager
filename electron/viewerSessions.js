@@ -14,6 +14,7 @@ import {
     readAudioMetadata,
 } from './audioMetadata.js';
 import { missingBinaryMessage } from './binaryPolicy.js';
+import { comicRequestAbortedError, viewerComicPageCache, viewerComicQueue } from './viewerComicQueue.js';
 import { parseComicInfoXml } from './comicInfoXml.js';
 import { parseMediaUrl } from './epubEditor/authoring.js';
 import {
@@ -48,6 +49,10 @@ const MAX_EPUB_STYLESHEET_BYTES = 1024 * 1024;
 const MAX_AUDIO_ARTWORK_BYTES = 16 * 1024 * 1024;
 const MAX_VIEWER_SESSIONS = 16;
 const MAX_CACHED_COMIC_ARCHIVE_ENTRIES = 10000;
+// This limits one extracted image, separately from the queue and retained-page cache.
+const MAX_COMIC_PAGE_BYTES = 500 * 1024 * 1024;
+const MAX_CANCELLED_COMIC_REQUEST_IDS = 1024;
+let nextComicManagerId = 1;
 const EPUB_CSS_PROPERTY_TO_REACT_STYLE = new Map([
     ['color', 'color'],
     ['background-color', 'backgroundColor'],
@@ -1774,6 +1779,7 @@ function throwIfViewerOperationAborted(signal) {
 
 function run7z(sevenZExe, args, options = {}) {
     return new Promise((resolve, reject) => {
+        throwIfViewerOperationAborted(options.signal);
         if (!sevenZExe) {
             reject(new Error(missingBinaryMessage('7z')));
             return;
@@ -1785,33 +1791,57 @@ function run7z(sevenZExe, args, options = {}) {
         const stdoutChunks = [];
         const stderrChunks = [];
         let stdoutLength = 0;
+        let stderrLength = 0;
+        let failure = null;
+        let killTimer = null;
+        const stop = error => {
+            if (failure) return;
+            failure = error;
+            stdoutChunks.length = 0;
+            stderrChunks.length = 0;
+            child.kill();
+            killTimer = setTimeout(() => child.kill('SIGKILL'), 500);
+            killTimer.unref?.();
+        };
+        const abort = () => stop(comicRequestAbortedError());
+        options.signal?.addEventListener('abort', abort, { once: true });
         child.stdout.on('data', chunk => {
-            const nextChunk = Buffer.from(chunk);
-            stdoutLength += nextChunk.length;
+            if (failure) return;
+            stdoutLength += chunk.length;
             if (options.maxBuffer && stdoutLength > options.maxBuffer) {
-                child.kill();
-                reject(new Error('Extracted data is too large.'));
+                stop(new Error('Extracted data is too large.'));
                 return;
             }
-            stdoutChunks.push(nextChunk);
+            stdoutChunks.push(chunk);
         });
-        child.stderr.on('data', chunk => stderrChunks.push(Buffer.from(chunk)));
-        child.on('error', reject);
+        child.stderr.on('data', chunk => {
+            if (failure || stderrLength >= 64 * 1024) return;
+            const remaining = Math.min(chunk.length, 64 * 1024 - stderrLength);
+            stderrChunks.push(chunk.subarray(0, remaining));
+            stderrLength += remaining;
+        });
+        child.on('error', error => { failure ||= error; });
         child.on('close', code => {
-            const stdout = Buffer.concat(stdoutChunks);
+            options.signal?.removeEventListener('abort', abort);
+            if (killTimer) clearTimeout(killTimer);
+            if (failure) {
+                reject(failure);
+                return;
+            }
             const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
             if (code !== 0) {
                 reject(new Error(stderr || `7z exited with code ${code}`));
                 return;
             }
-            resolve(stdout);
+            resolve(Buffer.concat(stdoutChunks, stdoutLength));
         });
     });
 }
 
-async function listWith7z(filePath, sevenZExe) {
+async function listWith7z(filePath, sevenZExe, options = {}) {
     const stdout = (await run7z(sevenZExe, ['l', '-slt', '-ba', '-sccUTF-8', '--', filePath], {
         maxBuffer: 20 * 1024 * 1024,
+        signal: options.signal,
     })).toString('utf8');
     const entries = [];
     let current = null;
@@ -1837,11 +1867,11 @@ async function listWith7z(filePath, sevenZExe) {
     return entries;
 }
 
-async function listArchiveEntries(filePath, sevenZExe) {
+async function listArchiveEntries(filePath, sevenZExe, options = {}) {
     const extension = path.extname(filePath).toLowerCase();
     if (extension === '.zip' || extension === '.cbz' || extension === '.epub') {
         try {
-            const entries = await listZipEntriesFromFile(filePath);
+            const entries = await listZipEntriesFromFile(filePath, options);
             if (entries.length > 0) {
                 return entries.map(entry => ({
                     name: normalizeInnerPath(entry.name),
@@ -1851,11 +1881,12 @@ async function listArchiveEntries(filePath, sevenZExe) {
                     zipEntry: entry,
                 }));
             }
-        } catch {
+        } catch (error) {
+            if (error?.name === 'AbortError') throw error;
             if (!sevenZExe) throw new Error('ZIP entries could not be read.');
         }
     }
-    return listWith7z(filePath, sevenZExe);
+    return listWith7z(filePath, sevenZExe, options);
 }
 
 async function archiveFileSignature(filePath) {
@@ -1926,6 +1957,7 @@ async function extractArchiveEntry(filePath, entryName, sevenZExe, options = {})
             throwIfViewerOperationAborted(options.signal);
             if (cachedEntry) {
                 const cachedBuffer = await readZipEntryFromFile(filePath, cachedEntry, {
+                    signal: options.signal,
                     maxBytes: options.maxBytes,
                     maxCompressedBytes: options.maxCompressedBytes,
                 });
@@ -1936,11 +1968,12 @@ async function extractArchiveEntry(filePath, entryName, sevenZExe, options = {})
                 }
             }
 
-            const entries = await listZipEntriesFromFile(filePath);
+            const entries = await listZipEntriesFromFile(filePath, { signal: options.signal });
             throwIfViewerOperationAborted(options.signal);
             const entry = entries.find(item => normalizeInnerPath(item.name) === normalizedEntryName);
             if (!entry) throw new Error(`${entryName} not found`);
             const buffer = await readZipEntryFromFile(filePath, entry, {
+                signal: options.signal,
                 maxBytes: options.maxBytes,
                 maxCompressedBytes: options.maxCompressedBytes,
             });
@@ -1954,7 +1987,8 @@ async function extractArchiveEntry(filePath, entryName, sevenZExe, options = {})
         if (!sevenZExe) throw nativeZipError;
     }
     return run7z(sevenZExe, ['x', '-so', '-spd', '-ssc', '-sccUTF-8', `-i!${entryName}`, '--', filePath], {
-        maxBuffer: options.maxBytes || 500 * 1024 * 1024,
+        maxBuffer: options.maxBytes || MAX_COMIC_PAGE_BYTES,
+        signal: options.signal,
     });
 }
 
@@ -2106,6 +2140,9 @@ export class ViewerSessionManager {
         this.getAudioLibraryRecord = options.getAudioLibraryRecord || (async () => null);
         this.sessions = new Map();
         this.comicArchiveEntryCaches = new Map();
+        this.comicRequestGroups = new Map();
+        this.comicManagerId = nextComicManagerId++;
+        this.nextComicRequestGroup = 1;
         this.epubAudioAssetCache = new Map();
         this.currentSessionId = '';
         this.currentSessionIdsByKind = new Map();
@@ -2125,6 +2162,8 @@ export class ViewerSessionManager {
                 break;
             }
             if (!oldestInactiveSessionId) return;
+            this.cancelComicSession(oldestInactiveSessionId);
+            this.comicRequestGroups.delete(oldestInactiveSessionId);
             this.sessions.delete(oldestInactiveSessionId);
             this.comicArchiveEntryCaches.delete(oldestInactiveSessionId);
             for (const [key, cached] of this.epubAudioAssetCache) {
@@ -2153,6 +2192,7 @@ export class ViewerSessionManager {
         };
         this.nextSessionSeq += 1;
         this.sessions.set(session.id, session);
+        this.activateComicSession(session.id);
         this.currentSessionId = session.id;
         this.currentSessionIdsByKind.set(type === 'audio' ? 'audio' : 'reader', session.id);
         this.pruneSessions();
@@ -2213,13 +2253,63 @@ export class ViewerSessionManager {
         return session;
     }
 
-    async listComicPages(sessionId) {
+    activateComicSession(sessionId) {
+        if (this.sessions.get(sessionId)?.type !== 'comic') return;
+        const current = this.comicRequestGroups.get(sessionId);
+        if (current && !current.cancelled) return;
+        this.comicRequestGroups.set(sessionId, {
+            key: `${this.comicManagerId}:${sessionId}:${this.nextComicRequestGroup++}`,
+            cancelled: false,
+            consumers: new Map(),
+            cancelledRequestIds: new Set(),
+        });
+    }
+
+    cancelComicPageRequest(sessionId, requestId) {
+        const group = this.comicRequestGroups.get(sessionId);
+        if (!group || group.cancelled || typeof requestId !== 'string' || !requestId || requestId.length > 200) return false;
+        group.cancelledRequestIds.add(requestId);
+        while (group.cancelledRequestIds.size > MAX_CANCELLED_COMIC_REQUEST_IDS) {
+            group.cancelledRequestIds.delete(group.cancelledRequestIds.values().next().value);
+        }
+        group.consumers.get(requestId)?.controller.abort();
+        group.consumers.delete(requestId);
+        return true;
+    }
+
+    cancelComicSession(sessionId) {
+        const group = this.comicRequestGroups.get(sessionId);
+        if (!group) return;
+        group.cancelled = true;
+        for (const consumer of group.consumers.values()) consumer.controller.abort();
+        group.consumers.clear();
+        group.cancelledRequestIds.clear();
+        viewerComicQueue.cancelGroup(group);
+        viewerComicPageCache.clearGroup(group);
+        this.comicArchiveEntryCaches.delete(sessionId);
+    }
+
+    runComicRequest(session, key, work, options = {}) {
+        const group = this.comicRequestGroups.get(session.id);
+        if (!group || group.cancelled) return Promise.reject(comicRequestAbortedError());
+        const resource = process.platform === 'win32' ? session.filePath.toLowerCase() : session.filePath;
+        return viewerComicQueue.run(`${group.key}:${key}`, group, work, { signal: options.signal, priority: options.priority, resource });
+    }
+
+    async listComicPages(sessionId, options = {}) {
         const session = this.get(sessionId);
         if (session.type !== 'comic') throw new Error('This file is not a comic archive.');
+        return this.runComicRequest(session, 'list', signal => this.readComicPages(session, signal), options);
+    }
+
+    async readComicPages(session, signal) {
         const sevenZExe = await this.getSevenZPath();
+        throwIfViewerOperationAborted(signal);
         const signatureBefore = await archiveFileSignature(session.filePath);
-        const entries = await listArchiveEntries(session.filePath, sevenZExe);
+        const entries = await listArchiveEntries(session.filePath, sevenZExe, { signal });
+        throwIfViewerOperationAborted(signal);
         const signatureAfter = await archiveFileSignature(session.filePath);
+        throwIfViewerOperationAborted(signal);
         const stableSignature = archiveFileSignaturesMatch(signatureBefore, signatureAfter)
             ? signatureAfter
             : null;
@@ -2240,13 +2330,15 @@ export class ViewerSessionManager {
         if (comicInfoEntry) {
             try {
                 const buffer = await extractArchiveEntry(session.filePath, comicInfoEntry.name, sevenZExe, {
+                    signal,
                     maxBytes: 2 * 1024 * 1024,
                     zipEntry: stableSignature ? cacheableZipEntry(comicInfoEntry) : null,
                 });
                 const metadata = parseComicViewerMetadata(buffer.toString('utf8'));
                 readingDirection = metadata.readingDirection;
                 format = metadata.format;
-            } catch {
+            } catch (error) {
+                if (error?.name === 'AbortError') throw error;
                 readingDirection = 'ltr';
             }
         }
@@ -2264,46 +2356,64 @@ export class ViewerSessionManager {
         };
     }
 
-    async getComicPage(sessionId, entryName) {
-        const pageData = await this.getComicPageData(sessionId, entryName);
+    async getComicPage(sessionId, entryName, options = {}) {
+        const pageData = await this.getComicPageData(sessionId, entryName, options);
         return {
             name: entryName,
             dataUrl: bufferToDataUrl(pageData.buffer, pageData.mime),
         };
     }
 
-    async getComicPageData(sessionId, entryName) {
+    async getComicPageData(sessionId, entryName, options = {}) {
         const session = this.get(sessionId);
         if (session.type !== 'comic') throw new Error('This file is not a comic archive.');
+        return this.runComicRequest(session, `page:${entryName}`, signal => this.readComicPageData(session, entryName, signal), options);
+    }
+
+    async readComicPageData(session, entryName, signal) {
+        const signatureBefore = await archiveFileSignature(session.filePath);
+        throwIfViewerOperationAborted(signal);
+        const group = this.comicRequestGroups.get(session.id);
+        const cacheKey = `${group.key}:page:${entryName}`;
+        const cachedPage = viewerComicPageCache.get(cacheKey, signatureBefore ? JSON.stringify(signatureBefore) : '');
+        if (cachedPage) return cachedPage;
         const sevenZExe = await this.getSevenZPath();
+        throwIfViewerOperationAborted(signal);
         const archiveEntryCache = this.comicArchiveEntryCaches.get(session.id);
         let zipEntry = null;
         if (archiveEntryCache) {
-            const currentSignature = await archiveFileSignature(session.filePath);
-            if (archiveFileSignaturesMatch(archiveEntryCache.signature, currentSignature)) {
+            if (archiveFileSignaturesMatch(archiveEntryCache.signature, signatureBefore)) {
                 zipEntry = archiveEntryCache.zipEntries.get(normalizeInnerPath(entryName)) || null;
             } else {
                 this.comicArchiveEntryCaches.delete(session.id);
             }
         }
         let buffer = await extractArchiveEntry(session.filePath, entryName, sevenZExe, {
-            maxBytes: 500 * 1024 * 1024,
+            signal,
+            maxBytes: MAX_COMIC_PAGE_BYTES,
             zipEntry,
         });
+        let signatureAfter = await archiveFileSignature(session.filePath);
         if (zipEntry) {
-            const extractedSignature = await archiveFileSignature(session.filePath);
-            if (!archiveFileSignaturesMatch(archiveEntryCache.signature, extractedSignature)) {
+            if (!archiveFileSignaturesMatch(archiveEntryCache.signature, signatureAfter)) {
                 this.comicArchiveEntryCaches.delete(session.id);
                 buffer = await extractArchiveEntry(session.filePath, entryName, sevenZExe, {
-                    maxBytes: 500 * 1024 * 1024,
+                    signal,
+                    maxBytes: MAX_COMIC_PAGE_BYTES,
                 });
+                signatureAfter = await archiveFileSignature(session.filePath);
             }
         }
-        return {
+        throwIfViewerOperationAborted(signal);
+        const page = {
             name: entryName,
             mime: imageMime(entryName),
             buffer,
         };
+        if (!group.cancelled && archiveFileSignaturesMatch(signatureBefore, signatureAfter)) {
+            viewerComicPageCache.set(cacheKey, group, JSON.stringify(signatureAfter), page);
+        }
+        return page;
     }
 
     async getDocumentData(sessionId) {
@@ -2405,7 +2515,7 @@ export class ViewerSessionManager {
         return asset;
     }
 
-    async getComicPageDataFromRequest(requestUrl = '') {
+    async getComicPageDataFromRequest(requestUrl = '', options = {}) {
         let url = null;
         try {
             url = new URL(requestUrl);
@@ -2417,7 +2527,28 @@ export class ViewerSessionManager {
         const sessionId = decodeURIComponent(pathParts[0] || '');
         const entryName = decodeURIComponent(pathParts[1] || '');
         if (!sessionId || !entryName) return null;
-        return this.getComicPageData(sessionId, entryName);
+        const priority = url.searchParams.get('priority') === 'background' ? 1 : 0;
+        const requestId = url.searchParams.get('requestId');
+        if (!requestId) return this.getComicPageData(sessionId, entryName, { ...options, priority });
+        if (requestId.length > 200) throw new Error('Invalid comic page request ID.');
+        const group = this.comicRequestGroups.get(sessionId);
+        if (!group || group.cancelled || group.cancelledRequestIds.has(requestId)) throw comicRequestAbortedError();
+        let consumer = group.consumers.get(requestId);
+        if (!consumer) {
+            consumer = { controller: new AbortController(), count: 0 };
+            group.consumers.set(requestId, consumer);
+        }
+        consumer.count += 1;
+        const abort = () => consumer.controller.abort();
+        options.signal?.addEventListener('abort', abort, { once: true });
+        if (options.signal?.aborted) abort();
+        try {
+            return await this.getComicPageData(sessionId, entryName, { priority, signal: consumer.controller.signal });
+        } finally {
+            options.signal?.removeEventListener('abort', abort);
+            consumer.count -= 1;
+            if (consumer.count === 0 && group.consumers.get(requestId) === consumer) group.consumers.delete(requestId);
+        }
     }
 
     async getText(sessionId, options = {}) {

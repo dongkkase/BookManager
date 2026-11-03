@@ -1,4 +1,5 @@
 import { classifyWebtoon, getWebtoonSampleIndices, hasLongWebtoonPages, isWebtoonByArchiveRatios, isWebtoonByArchiveSize } from './viewerWebtoonDetection.js';
+import { createComicPageRequest } from './viewerComicResources.js';
 
 const MAXIMUM_SAMPLE_BYTES = 16 * 1024 * 1024;
 const MAXIMUM_TOTAL_BYTES = 32 * 1024 * 1024;
@@ -81,6 +82,18 @@ export function readViewerImageHeaderMetrics(bytes) {
 }
 
 async function fetchSampleBytes(url, limit, signal, isCancelled) {
+    const request = createComicPageRequest(url);
+    const cancel = () => request.release();
+    signal?.addEventListener('abort', cancel, { once: true });
+    try {
+        return await readSampleBytes(request.url, limit, signal, isCancelled);
+    } finally {
+        signal?.removeEventListener('abort', cancel);
+        request.release();
+    }
+}
+
+async function readSampleBytes(url, limit, signal, isCancelled) {
     if (!url || isCancelled()) return null;
     const response = await fetch(url, { cache: 'no-store', signal });
     if (!response.ok || isCancelled()) return null;

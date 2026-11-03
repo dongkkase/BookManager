@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { transformSync } from 'esbuild';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample.js';
+import { retainComicImageSource } from './viewerComicResources.js';
 
 const source = fs.readFileSync(new URL('./ViewerApp.jsx', import.meta.url), 'utf8');
 const start = source.indexOf('function ComicPageFrame({');
@@ -36,7 +37,10 @@ function fixture() {
     const observers = new Set();
     const pending = [];
     const canvas = canvasFixture();
-    const image = { complete: true, naturalWidth: 1200, naturalHeight: 1800 };
+    const image = {
+        complete: true, naturalWidth: 1200, naturalHeight: 1800,
+        removeAttribute(name) { if (name === 'src') this.src = ''; },
+    };
     let cursor = 0;
     let effects = [];
     let dirty = false;
@@ -116,9 +120,9 @@ function fixture() {
     });
     const Component = new Function('React', 'useRef', 'useState', 'useCallback', 'useEffect', 'window',
         'ResizeObserver', 'comicDownsampleTarget', 'paintComicDownsample', 'paintAmbientCanvasFromSource',
-        'COMIC_HIGH_QUALITY_RENDER_DELAY_MS', `${compiled}; return ComicPageFrame;`)(
+        'COMIC_HIGH_QUALITY_RENDER_DELAY_MS', 'retainComicImageSource', 'useComicPageRequest', `${compiled}; return ComicPageFrame;`)(
         react, react.useRef, react.useState, react.useCallback, react.useEffect, window,
-        ResizeObserver, comicDownsampleTarget, renderDownsample, () => true, 120,
+        ResizeObserver, comicDownsampleTarget, renderDownsample, () => true, 120, retainComicImageSource, source => source,
     );
     const attach = node => {
         if (!node || typeof node !== 'object') return;
@@ -147,7 +151,7 @@ function fixture() {
     };
     render();
     return {
-        canvas, pending,
+        canvas, image, pending,
         get ready() { return tree.props['data-high-quality-ready'] === 'true'; },
         get resourceCount() { return timers.size + observers.size + listeners.size; },
         get updatesAfterUnmount() { return updatesAfterUnmount; },
@@ -238,6 +242,7 @@ test('만화 프레임 해제는 진행 중인 HQ 작업과 캔버스를 정리�
     assert.equal(f.canvas.bitmap, '');
     assert.equal(f.resourceCount, 0);
     assert.equal(f.updatesAfterUnmount, 0);
+    assert.equal(f.image.src, '');
 });
 
 test('원본 크기 이상으로 확대하면 기존 동작대로 HQ 축소 대신 원본 이미지를 사용한다', async t => {

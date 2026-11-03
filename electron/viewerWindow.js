@@ -210,12 +210,12 @@ function registerComicProtocol(sessions) {
     comicProtocolRegistered = true;
     protocol.handle('bookmanager-comic', async request => {
         try {
-            const page = await sessions.getComicPageDataFromRequest(request.url);
+            const page = await sessions.getComicPageDataFromRequest(request.url, { signal: request.signal });
             if (!page) return new Response('Not found', { status: 404 });
-            return new Response(new Uint8Array(page.buffer), {
+            return new Response(Readable.toWeb(Readable.from([page.buffer])), {
                 headers: {
                     'Content-Type': page.mime,
-                    'Cache-Control': 'private, max-age=3600',
+                    'Cache-Control': 'no-store',
                     'Access-Control-Allow-Origin': '*',
                 },
             });
@@ -308,10 +308,12 @@ export function setupViewerWindowManager(options = {}) {
     const setContextSession = (context, session, options = {}) => {
         if (!context || !session) return;
         if (context.currentSession?.id !== session.id) {
+            sessions.cancelComicSession(context.currentSession?.id);
             context.epubRequestController?.abort();
             context.epubRequestController = null;
             releasePreview(context.currentSession);
         }
+        sessions.activateComicSession(session.id);
         if (context.kind === 'audio' && context.currentSession?.id !== session.id) {
             if (options.preserveCloseRequest !== true) {
                 context.closeRequestVersion += 1;
@@ -605,6 +607,10 @@ export function setupViewerWindowManager(options = {}) {
                 return;
             }
             if (context.kind === 'audio') context.allowClose = false;
+            if (context.window === viewerWindow) {
+                sessions.cancelComicSession(context.currentSession?.id);
+                sessions.cancelComicSession(context.pendingSession?.id);
+            }
             context.closingWindows.add(viewerWindow);
         };
 
@@ -624,6 +630,11 @@ export function setupViewerWindowManager(options = {}) {
             }
             console.info(`[ViewerWindow] Ready to show (${context.kind}).`);
             if (!context.miniPlayerActive) viewerWindow.show();
+        });
+        viewerWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+            if (context.window !== viewerWindow || !isMainFrame || isInPlace) return;
+            sessions.cancelComicSession(context.currentSession?.id);
+            sessions.cancelComicSession(context.pendingSession?.id);
         });
         viewerWindow.webContents.on('did-finish-load', () => {
             if (context.window !== viewerWindow) return;
@@ -650,6 +661,7 @@ export function setupViewerWindowManager(options = {}) {
         }
         viewerWindow.webContents.on('render-process-gone', (_event, details) => {
             const currentWindow = context.window === viewerWindow;
+            if (currentWindow) sessions.cancelComicSession(context.currentSession?.id);
             const shuttingDown = !currentWindow || isShuttingDown() || context.closingWindows.has(viewerWindow);
             if (!isExpectedProcessExit(details, { isShuttingDown: shuttingDown })) {
                 reportTelemetryError(details, {
@@ -676,6 +688,8 @@ export function setupViewerWindowManager(options = {}) {
         viewerWindow.on('closed', () => {
             context.closingWindows.delete(viewerWindow);
             if (context.window !== viewerWindow) return;
+            sessions.cancelComicSession(context.currentSession?.id);
+            sessions.cancelComicSession(context.pendingSession?.id);
             context.epubRequestController?.abort();
             context.epubRequestController = null;
             if (context.stateSaveTimer) {
@@ -894,7 +908,9 @@ export function setupViewerWindowManager(options = {}) {
     ipcMain.handle('viewer:getCurrentSession', async event => {
         const context = viewerContextForSender(event.sender);
         if (!context) return null;
-        return context.currentSession || sessions.current(context.kind);
+        const session = context.currentSession || sessions.current(context.kind);
+        sessions.activateComicSession(session?.id);
+        return session;
     });
     ipcMain.handle('viewer:listComicPages', async (event, sessionId) => {
         viewerContextForSessionRequest(event, sessionId);
@@ -903,6 +919,10 @@ export function setupViewerWindowManager(options = {}) {
     ipcMain.handle('viewer:getComicPage', async (event, sessionId, entryName) => {
         viewerContextForSessionRequest(event, sessionId);
         return sessions.getComicPage(sessionId, entryName);
+    });
+    ipcMain.handle('viewer:cancelComicPageRequest', async (event, sessionId, requestId) => {
+        viewerContextForSessionRequest(event, sessionId);
+        return sessions.cancelComicPageRequest(sessionId, requestId);
     });
     ipcMain.handle('viewer:getDocumentData', async (event, sessionId) => {
         viewerContextForSessionRequest(event, sessionId);

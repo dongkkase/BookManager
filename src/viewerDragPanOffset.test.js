@@ -71,6 +71,15 @@ function fixture({ type = 'pdf', translate = [0, 0], scroll = [0, 0], content = 
     };
 }
 
+test('타일로 표시하는 긴 만화도 원래 페이지 영역을 잡고 드래그한다', () => {
+    const f = fixture({ type: 'comic', scroll: [120, 180] });
+    f.target.closest = selector => selector.split(',').map(value => value.trim()).includes('.viewer-comic-tiled-page') ? f.target : null;
+    assert.equal(f.down().prevented, true);
+    f.move(40, 25);
+    assert.equal(f.node.scrollLeft, 80);
+    assert.equal(f.node.scrollTop, 155);
+});
+
 test('일반 PDF와 만화 드래그는 기존 스크롤 방향과 포인터 캡처 동작을 유지한다', () => {
     for (const type of ['pdf', 'comic']) {
         const f = fixture({ type, scroll: [120, 180] });

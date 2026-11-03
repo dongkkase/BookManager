@@ -2,6 +2,9 @@ import { epubTtsText, sliceEpubTtsEdits } from '../electron/epubTts.js';
 import { selectionEpubTtsText } from './viewerEpubTts.js';
 import React, { useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ViewerPageCurlBook, { PAGE_CURL_SNAPSHOT_TIMEOUT } from './ViewerPageCurlBook';
+import ViewerComicScroll from './ViewerComicScroll';
+import { useComicPageRequest } from './useComicPageRequest';
+import { comicBackgroundPageUrl, createComicPageRequest, limitComicPageData, observeComicThumbnail, retainComicImageSource } from './viewerComicResources';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { loadViewerPdfDocument } from './viewerPdfLoader';
@@ -29,6 +32,7 @@ import { epubAudioBlockNodes, separateEpubAudioBlockImages, sliceEpubAudioBlock 
 import { useEpubAudioContext } from './useEpubAudioContext';
 import { useEpubAudioPlayback } from './useEpubAudioPlayback';
 import { restoreEpubOriginalScrollPosition } from './epubOriginalScrollRestore';
+import { captureComicScrollPosition, normalizeComicScrollPosition, restoreComicScrollPosition } from './viewerComicScrollPosition';
 import { buildOriginalEpubPages, captureEpubReadingPosition, resolveEpubReadingPosition } from './epubOriginalPagination';
 import { normalizeScrollSettings } from './viewerScroll';
 import { useViewerScroll } from './useViewerScroll';
@@ -41,6 +45,9 @@ import { useReadingActivity } from './hooks/useReadingActivity';
 import { useViewerTtsTransition } from './hooks/useViewerTtsTransition';
 import { comicDownsampleTarget, paintComicDownsample } from './comicImageDownsample';
 import { paintAmbientCanvasFromSource } from './viewerAmbient';
+import ViewerComicPngThumbnail from './ViewerComicPngThumbnail';
+import ViewerComicTiledPage from './ViewerComicTiledPage';
+import useComicPngPage from './useComicPngPage';
 import { normalizeViewerArrowKeyMode, viewerArrowKeyPageDelta } from './viewerArrowKeyPolicy';
 import { buildComicSlideThumbGroups, buildSlideThumbGroups } from './viewerComicSlideThumbs';
 import {
@@ -432,6 +439,7 @@ function viewerPageTargetIsPrepared(targetLayer, format) {
       return viewerElementsIncludingSelf(targetLayer, '.viewer-comic-placeholder.is-error').length > 0;
     }
     return frames.every(frame => {
+      if (frame.classList.contains('viewer-comic-tiled-page')) return frame.dataset.comicTiledReady === 'true';
       const image = frame.querySelector('.viewer-comic-image');
       const imageReady = Boolean(
         image?.naturalWidth > 0
@@ -476,7 +484,7 @@ function viewerInitialRenderIsPrepared(root, { format, flowMode, pageIndex }) {
   if (flowMode === 'scroll') {
     const normalizedIndex = Math.max(0, Number(pageIndex) || 0);
     const targetSelector = format === 'comic'
-      ? `.viewer-comic-page-frame[data-page-index="${normalizedIndex}"], .viewer-comic-placeholder[data-page-index="${normalizedIndex}"]`
+      ? `.viewer-comic-scroll-page[data-page-index="${normalizedIndex}"], .viewer-comic-page-frame[data-page-index="${normalizedIndex}"], .viewer-comic-placeholder[data-page-index="${normalizedIndex}"]`
       : format === 'pdf'
         ? `.viewer-pdf-page[data-pdf-page-index="${normalizedIndex}"]`
         : `[data-reader-index="${normalizedIndex}"], [data-reader-page-index="${normalizedIndex}"]`;
@@ -4913,8 +4921,94 @@ function PdfSlideThumb({ pdfDocument, items = [], pageLabel, ariaPageLabel, acti
   );
 }
 
+function ComicNearbyPages({ pages, pageIndex, onImageSize }) {
+    const reportSizeRef = useRef(onImageSize);
+    reportSizeRef.current = onImageSize;
+    useEffect(() => {
+        let disposed = false;
+        const images = [];
+        for (let index = Math.max(0, pageIndex - 2); index <= Math.min(pages.length - 1, pageIndex + 3); index += 1) {
+            const page = pages[index];
+            if (!page?.pageUrl) continue;
+            const image = new Image();
+            image.onload = () => {
+                if (!disposed) reportSizeRef.current(page.name, image.naturalWidth, image.naturalHeight);
+            };
+            const request = createComicPageRequest(comicBackgroundPageUrl(page.pageUrl));
+            image.src = request.url;
+            images.push({ image, request });
+        }
+        return () => {
+            disposed = true;
+            images.forEach(({ image, request }) => {
+                image.onload = null;
+                image.removeAttribute('src');
+                request.release();
+            });
+        };
+    }, [pages, pageIndex]);
+    return null;
+}
+
+function ComicThumbnailImage({ item }) {
+    return /\.png$/i.test(item.page?.name || '')
+        ? <ViewerComicPngThumbnail item={item} />
+        : <ComicOriginalThumbnailImage item={item} />;
+}
+
+function ComicOriginalThumbnailImage({ item }) {
+    const retainedSource = useRef('');
+    const canvasRef = useRef(null);
+    const [ready, setReady] = useState(false);
+    if (!ready) retainedSource.current = retainComicImageSource(retainedSource.current, item.src || '');
+    const src = useComicPageRequest(ready ? '' : retainedSource.current);
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        return () => {
+            if (canvas) canvas.width = canvas.height = 1;
+            retainedSource.current = '';
+        };
+    }, []);
+    return <>
+        <canvas ref={canvasRef} aria-hidden="true" style={{ display: ready ? 'block' : 'none' }} />
+        {!ready && <img
+            src={src || undefined}
+            alt=""
+            aria-hidden="true"
+            onLoad={event => {
+                item.onLoad?.(event);
+                // Other supported formats can animate; keep their original image alive.
+                if (!/\.(?:jpe?g|bmp)$/i.test(item.page?.name || '')) return;
+                const image = event.currentTarget;
+                const canvas = canvasRef.current;
+                const bounds = canvas?.parentElement?.getBoundingClientRect();
+                const context = canvas?.getContext('2d');
+                if (!context || !image.naturalWidth || !image.naturalHeight) return;
+                const scale = Math.min((bounds?.width || 60) / image.naturalWidth, 70 / image.naturalHeight);
+                const width = Math.max(1, Math.round(image.naturalWidth * scale));
+                const height = Math.max(1, Math.round(image.naturalHeight * scale));
+                const density = Math.min(2, window.devicePixelRatio || 1);
+                canvas.width = Math.ceil(width * density);
+                canvas.height = Math.ceil(height * density);
+                canvas.style.width = `${width}px`;
+                canvas.style.height = `${height}px`;
+                context.drawImage(image, 0, 0, canvas.width, canvas.height);
+                retainedSource.current = '';
+                setReady(true);
+            }}
+            onError={() => {
+                if (item.page?.pageUrl && !retainedSource.current.startsWith('data:')) item.onFallback?.();
+            }}
+        />}
+    </>;
+}
+
 function ComicSlideThumb({ items = [], pageLabel, ariaPageLabel, active, navigationDirection = 'ltr', onClick }) {
   const itemRef = useRef(null);
+  const [visible, setVisible] = useState(active);
+
+  useEffect(() => observeComicThumbnail(itemRef.current, setVisible), []);
+
   const isSpread = items.length > 1;
   const ready = items.length > 0 && items.every(item => Boolean(item.src));
 
@@ -4944,17 +5038,8 @@ function ComicSlideThumb({ items = [], pageLabel, ariaPageLabel, active, navigat
             key={`${item.page?.name || item.pageIndex}-${item.pageIndex}`}
             className="viewer-slide-thumb-comic-page"
           >
-            {item.src ? (
-              <img
-                src={item.src}
-                alt=""
-                aria-hidden="true"
-                loading="lazy"
-                onLoad={item.onLoad}
-                onError={() => {
-                  if (item.page?.pageUrl && !item.hasFallbackSrc) item.onFallback?.();
-                }}
-              />
+            {(visible || active) && item.src ? (
+              <ComicThumbnailImage item={item} />
             ) : (
               <span className="viewer-slide-thumb-placeholder">{item.pageNumber}</span>
             )}
@@ -5162,10 +5247,55 @@ function ViewerNavigationPanel({
   );
 }
 
+function ComicScrollPngPage(props) {
+    const retainedSource = useRef('');
+    retainedSource.current = retainComicImageSource(retainedSource.current, props.src || '');
+    const source = retainedSource.current;
+    const resource = useComicPngPage(source, props.page);
+    const notifiedRef = useRef(null);
+    const missingSourceRef = useRef(false);
+    const reportError = () => props.onImageError?.({
+        currentTarget: { currentSrc: source, getAttribute: () => source },
+    });
+    useEffect(() => {
+        if (!source && !missingSourceRef.current) {
+            missingSourceRef.current = true;
+            props.onMissingSource?.();
+        }
+        if (resource.status === 'tiled' && notifiedRef.current !== resource.bitmap) {
+            notifiedRef.current = resource.bitmap;
+            props.onImageLoad?.({ currentTarget: { naturalWidth: resource.width, naturalHeight: resource.height } });
+        } else if (resource.status === 'error' && notifiedRef.current !== resource.error) {
+            notifiedRef.current = resource.error;
+            reportError();
+        }
+    });
+    if (resource.status === 'tiled') return <ViewerComicTiledPage
+        bitmap={resource.bitmap}
+        width={resource.width}
+        height={resource.height}
+        page={props.page}
+        index={props.index}
+        frameStyle={props.frameStyle}
+        scrollRef={props.scrollRef}
+        viewMode={props.viewMode}
+        renderAmbientCanvas={props.renderAmbientCanvas}
+        onError={reportError}
+    />;
+    if (resource.status === 'original') return <ComicPageFrame
+        {...props}
+        src={resource.url}
+        onImageError={reportError}
+    />;
+    return <div className="viewer-comic-placeholder" data-page-index={props.index}>
+        {viewerText('viewer.common.loading', 'Loading...')}
+    </div>;
+}
+
 function ComicPageFrame({
   page,
   index,
-  src,
+  src: requestedSource,
   viewMode,
   imageClassName,
   frameStyle,
@@ -5177,7 +5307,17 @@ function ComicPageFrame({
   renderAmbientCanvas = true,
   onImageLoad,
   onImageError,
+  onMissingSource,
 }) {
+  const retainedSource = useRef('');
+  retainedSource.current = retainComicImageSource(retainedSource.current, requestedSource || '');
+  const src = useComicPageRequest(retainedSource.current);
+  const missingSourceRequestedRef = useRef(false);
+  useEffect(() => {
+      if (retainedSource.current || missingSourceRequestedRef.current) return;
+      missingSourceRequestedRef.current = true;
+      onMissingSource?.();
+  }, [src, onMissingSource]);
   const frameRef = useRef(null);
   const imageRef = useRef(null);
   const ambientCanvasRef = useRef(null);
@@ -5185,6 +5325,16 @@ function ComicPageFrame({
   const qualityScheduleRef = useRef(null);
   const [qualityReady, setQualityReady] = useState(false);
   const [qualitySettled, setQualitySettled] = useState(!highQuality);
+
+    useEffect(() => {
+        const image = imageRef.current;
+        const ambient = ambientCanvasRef.current;
+        return () => {
+            image?.removeAttribute('src');
+            if (ambient) ambient.width = ambient.height = 1;
+            retainedSource.current = '';
+        };
+    }, []);
 
   const paintAmbient = useCallback(image => {
     if (!renderAmbientCanvas) return false;
@@ -5389,7 +5539,7 @@ function ComicPageFrame({
         ref={imageRef}
         className={imageClassName}
         crossOrigin={src.startsWith('bookmanager-comic:') ? 'anonymous' : undefined}
-        src={src}
+        src={src || undefined}
         alt={page.basename}
         draggable={false}
         style={imageStyle}
@@ -5414,9 +5564,22 @@ function ComicPageFrame({
   );
 }
 
-function ComicFlipBookAmbientPage({ src, frameStyle }) {
+function ComicFlipBookAmbientPage({ src: requestedSource, frameStyle }) {
+  const retainedSource = useRef('');
+  retainedSource.current = retainComicImageSource(retainedSource.current, requestedSource || '');
+  const src = useComicPageRequest(retainedSource.current);
   const imageRef = useRef(null);
   const ambientCanvasRef = useRef(null);
+
+    useEffect(() => {
+        const image = imageRef.current;
+        const canvas = ambientCanvasRef.current;
+        return () => {
+            image?.removeAttribute('src');
+            if (canvas) canvas.width = canvas.height = 1;
+            retainedSource.current = '';
+        };
+    }, []);
 
   const paintAmbient = useCallback(image => {
     return paintAmbientCanvasFromSource(ambientCanvasRef.current, image);
@@ -6017,6 +6180,7 @@ function ViewerApp() {
     const scrollZoomAnchorApplyRef = useRef(null);
     const zoomValueRef = useRef(zoom);
   const scrollRestoreTokenRef = useRef(0);
+    const comicScrollRestoreRef = useRef(null);
   const textSelectionPointerRef = useRef(null);
   const selectionTtsRunRef = useRef(0);
     const ttsPlaybackRef = useRef(null);
@@ -6629,6 +6793,11 @@ function ViewerApp() {
     const offsetY = clamp(clientY - rect.top, 0, Math.max(0, node.clientHeight));
     const target = event?.target || document.elementFromPoint(clientX, clientY);
         let targetSelector = node.contains(target) ? zoomAnchorSelectorForTarget(target) : null;
+        const hitRect = targetSelector ? node.querySelector(targetSelector)?.getBoundingClientRect() : null;
+        if (hitRect && (clientX < hitRect.left || clientX > hitRect.right
+            || clientY < hitRect.top || clientY > hitRect.bottom)) {
+            targetSelector = null;
+        }
         if (!targetSelector) {
             let nearestDistance = Infinity;
             // Background and page gutters use the nearest visible page as the zoom plane.
@@ -6734,6 +6903,8 @@ function ViewerApp() {
                 let translateY = viewportRect.top + offsetY - scrolledRect.top - (anchor.target.ratioY * scrolledRect.height);
                 for (let pass = 0; pass < 3; pass += 1) {
                     if (pass === 0 && Math.abs(translateX) <= 0.01 && Math.abs(translateY) <= 0.01) break;
+                    const scrollLeftBeforeTranslation = node.scrollLeft;
+                    const scrollTopBeforeTranslation = node.scrollTop;
                     node.style.setProperty('--viewer-zoom-translate', `${translateX}px ${translateY}px`);
                     // Scrollbars can change centered layout after applying the translation.
                     const translatedRect = targetNode.getBoundingClientRect();
@@ -6744,11 +6915,13 @@ function ViewerApp() {
                     if (Math.abs(remainingX) <= 0.01 && Math.abs(remainingY) <= 0.01) break;
                     // A negative translation can shrink overflow and clamp the scroll back.
                     // Fold that scroll into the translation instead of chasing the moving limit.
-                    if (translateX < 0 && remainingX < -0.01 && node.scrollLeft > 0) {
+                    if (translateX < 0 && remainingX < -0.01 && node.scrollLeft > 0
+                        && node.scrollLeft < scrollLeftBeforeTranslation) {
                         translateX -= node.scrollLeft;
                         node.scrollLeft = 0;
                     }
-                    if (translateY < 0 && remainingY < -0.01 && node.scrollTop > 0) {
+                    if (translateY < 0 && remainingY < -0.01 && node.scrollTop > 0
+                        && node.scrollTop < scrollTopBeforeTranslation) {
                         translateY -= node.scrollTop;
                         node.scrollTop = 0;
                     }
@@ -6895,10 +7068,14 @@ function ViewerApp() {
             if (now - autoScrollPersistTimeRef.current < 500) return;
             autoScrollPersistTimeRef.current = now;
         }
+    const comicScrollPosition = session.type === 'comic' && flowMode === 'scroll'
+        ? comicScrollRestoreRef.current?.position || captureComicScrollPosition(scrollRef.current, 'pageIndex' in patch ? patch.pageIndex : pageIndex)
+        : null;
     const fileState = {
         updatedAt: Date.now(),
         ...(session.type === 'epub' ? { epubPosition: captureCurrentEpubPosition('pageIndex' in patch ? patch.pageIndex : pageIndex) } : {}),
-      pageIndex: 'pageIndex' in patch ? patch.pageIndex : pageIndex,
+        ...(comicScrollPosition ? { comicScrollPosition } : {}),
+      pageIndex: comicScrollPosition?.pageIndex ?? ('pageIndex' in patch ? patch.pageIndex : pageIndex),
       scrollPercent: 'scrollPercent' in patch ? patch.scrollPercent : scrollPercent,
       pageCount: 'pageCount' in patch ? patch.pageCount : pageCount,
     };
@@ -6929,17 +7106,20 @@ function ViewerApp() {
 
   const persistScrollState = useCallback((nextScrollPercent, nextPageIndex) => {
     if (!session || flowMode !== 'scroll' || !readiveResumeReady || epubPositionPendingRef.current || epubOriginalScrollRestoreRef.current.position) return;
+        if (session.type === 'comic' && comicScrollRestoreRef.current) return;
         if (autoScrolling) {
             const now = Date.now();
             if (now - autoScrollLocalSaveTimeRef.current < 500) return;
             autoScrollLocalSaveTimeRef.current = now;
         }
     const currentState = readJson(storageKey(session, 'state'), {}, readingLibraryPathsRef.current);
+    const comicScrollPosition = session.type === 'comic' ? captureComicScrollPosition(scrollRef.current, nextPageIndex) : null;
     saveJson(storageKey(session, 'state'), {
       ...currentState,
         updatedAt: Date.now(),
         ...(session.type === 'epub' ? { epubPosition: captureCurrentEpubPosition(nextPageIndex) } : {}),
-      pageIndex: clamp(Number(nextPageIndex) || 0, 0, Math.max(0, pageCount - 1)),
+        ...(comicScrollPosition ? { comicScrollPosition } : {}),
+      pageIndex: comicScrollPosition?.pageIndex ?? clamp(Number(nextPageIndex) || 0, 0, Math.max(0, pageCount - 1)),
       scrollPercent: clamp(Number(nextScrollPercent) || 0, 0, 100),
       pageCount,
     }, readingLibraryPathsRef.current);
@@ -6969,11 +7149,28 @@ function ViewerApp() {
     };
   }, [persistCurrentPosition]);
 
-  const restoreSavedScrollPosition = useCallback((targetSession, rawScrollPercent) => {
+  const restoreSavedScrollPosition = useCallback((targetSession, rawScrollPercent, comicPosition) => {
     const targetPercent = clamp(Number(rawScrollPercent) || 0, 0, 100);
-    if (!targetSession || targetPercent <= 0) return;
+    if (!targetSession || (targetSession.type !== 'comic' && targetPercent <= 0)) return;
     const restoreToken = scrollRestoreTokenRef.current + 1;
     scrollRestoreTokenRef.current = restoreToken;
+        comicScrollRestoreRef.current?.cancel?.();
+        if (targetSession.type === 'comic') {
+            const sequence = loadSequenceRef.current;
+            const restore = { position: normalizeComicScrollPosition(comicPosition), cancel: null };
+            comicScrollRestoreRef.current = restore;
+            restore.cancel = restoreComicScrollPosition(scrollRef.current, restore.position, {
+                isCurrent: () => scrollRestoreTokenRef.current === restoreToken && loadSequenceRef.current === sequence,
+                onFinish: () => {
+                    if (comicScrollRestoreRef.current !== restore) return;
+                    comicScrollRestoreRef.current = null;
+                    if (scrollRestoreTokenRef.current === restoreToken && loadSequenceRef.current === sequence) {
+                        persistCurrentPositionRef.current?.();
+                    }
+                },
+            });
+            return;
+        }
     const applyRestore = attempt => {
       if (scrollRestoreTokenRef.current !== restoreToken) return;
       const node = scrollRef.current;
@@ -6995,6 +7192,10 @@ function ViewerApp() {
   }, []);
 
     const restoreCoverEditedScrollPage = useCallback((type, targetPageIndex) => {
+        if (type === 'comic') {
+            restoreSavedScrollPosition(session, 0, { pageIndex: targetPageIndex, offsetRatio: 0 });
+            return;
+        }
         const restoreToken = ++scrollRestoreTokenRef.current;
         const attribute = type === 'comic' ? 'data-page-index' : 'data-reader-index';
         const applyRestore = attempt => {
@@ -7005,7 +7206,12 @@ function ViewerApp() {
             if (attempt < 24) window.requestAnimationFrame(() => applyRestore(attempt + 1));
         };
         window.requestAnimationFrame(() => applyRestore(0));
-    }, []);
+    }, [restoreSavedScrollPosition, session]);
+
+    useEffect(() => {
+        if (flowMode !== 'scroll') comicScrollRestoreRef.current?.cancel?.();
+        return () => comicScrollRestoreRef.current?.cancel?.();
+    }, [flowMode, session?.id]);
 
   const clearDocumentFrame = useCallback(() => {
     documentAbortRef.current?.abort();
@@ -7052,7 +7258,22 @@ function ViewerApp() {
     const autoZoom = webtoonZoomRef.current;
     if (autoZoom?.active && autoZoom.ready && !autoZoom.resizeAnchor
         && width <= autoZoom.referenceWidth) {
-        autoZoom.resizeAnchor = createScrollZoomAnchor();
+        const nextReference = webtoonWidthReference(pages, {
+            ...pageSizes,
+            [pageName]: { width, height },
+        });
+        const displayWidth = reference => scaledPageSizeForViewMode({
+            viewMode: selectedFlowMode === 'auto' && viewMode === 'fit' ? 'width' : viewMode,
+            baseWidth: reference.width,
+            baseHeight: reference.height,
+            availableWidth: Math.max(120, (Number(readerViewport.width) || 900) - 24),
+            availableHeight: Math.max(120, (Number(readerViewport.height) || 700) - 24),
+            zoom,
+        }).width;
+        if (nextReference && displayWidth(nextReference) !== displayWidth({
+            width: autoZoom.referenceWidth,
+            height: autoZoom.referenceHeight,
+        })) autoZoom.resizeAnchor = createScrollZoomAnchor();
     }
     const ratio = width / height;
     setPageRatios(prev => (prev[pageName] === ratio ? prev : {
@@ -7067,7 +7288,7 @@ function ViewerApp() {
         [pageName]: { width, height },
       };
     });
-  }, [createScrollZoomAnchor, pageSizes]);
+  }, [createScrollZoomAnchor, pages, pageSizes, readerViewport.height, readerViewport.width, selectedFlowMode, viewMode, zoom]);
 
   const clearPageTurnRuntime = useCallback(() => {
     if (pageTurnTimerRef.current) {
@@ -7249,6 +7470,7 @@ function ViewerApp() {
     commitPdfPage();
   }, [flowMode, pdfPageCount, resetPageModeScroll, scrollPdfPageIntoView, setPageIndexSynced, triggerPdfPageEffect]);
   const goPageIndex = useCallback((index, options = {}) => {
+    comicScrollRestoreRef.current?.cancel?.();
     const targetIndex = clamp(Number(index) || 0, 0, Math.max(0, pageCount - 1));
     if (session?.type === 'pdf') {
       goPdfPage(targetIndex, options);
@@ -7268,6 +7490,9 @@ function ViewerApp() {
           : `[data-reader-index="${targetIndex}"]`;
         const targetNode = node.querySelector?.(selector);
         targetNode?.scrollIntoView?.({ block: 'start' });
+        if (session?.type === 'comic') {
+            restoreSavedScrollPosition(session, 0, { pageIndex: targetIndex, offsetRatio: 0 });
+        }
         return;
       }
       node.scrollTo?.({ top: 0 });
@@ -7282,7 +7507,7 @@ function ViewerApp() {
     });
     if (deferred) return;
     commitPageIndex();
-  }, [flowMode, goPdfPage, pageCount, resetScrollZoomOffset, session?.type, setPageIndexSynced, triggerComicPageEffect, triggerReaderPageEffect]);
+  }, [flowMode, goPdfPage, pageCount, resetScrollZoomOffset, restoreSavedScrollPosition, session, setPageIndexSynced, triggerComicPageEffect, triggerReaderPageEffect]);
 
   useEffect(() => {
     clearPageTurnRuntime();
@@ -7329,6 +7554,7 @@ function ViewerApp() {
     stopDetachedRemoteTtsAudio();
     const loadSequence = loadSequenceRef.current + 1;
     loadSequenceRef.current = loadSequence;
+        comicScrollRestoreRef.current?.cancel?.();
         webtoonDetectionRef.current?.detector.dispose();
         webtoonDetectionRef.current = { sessionId: nextSession.id, readingDirection: '', detector: createWebtoonDetectionSession() };
         webtoonZoomRef.current = null;
@@ -7495,7 +7721,11 @@ function ViewerApp() {
         if (flowMode === 'scroll') {
             if (Number.isInteger(savedState.coverEditPageIndex) && ['comic', 'epub'].includes(session.type)) {
                 restoreCoverEditedScrollPage(session.type, restoredPageIndex);
-            } else restoreSavedScrollPosition(session, savedState.scrollPercent);
+            } else {
+                const savedComicPosition = !savedState.readiveLocator && savedState.comicScrollPosition?.pageIndex === restoredPageIndex
+                    ? savedState.comicScrollPosition : null;
+                restoreSavedScrollPosition(session, savedState.scrollPercent, normalizeComicScrollPosition(savedComicPosition, restoredPageIndex));
+            }
         }
         setReadiveResumePending(null);
         setReadiveResumeReady(true);
@@ -7505,11 +7735,14 @@ function ViewerApp() {
     if (!session || session.type !== 'comic' || index < 0 || index >= pages.length) return;
     const page = pages[index];
     if (!options.force && page?.pageUrl) return;
-    if (!page || pageData[page.name] || loadingPagesRef.current.has(page.name)) return;
-    loadingPagesRef.current.add(page.name);
+    if (!page || pageData[page.name] || loadingPagesRef.current.has(`${session.id}:${page.name}`)) return;
+    const sequence = loadSequenceRef.current;
+    const requestKey = `${session.id}:${page.name}`;
+    loadingPagesRef.current.add(requestKey);
     try {
       const result = await window.viewerAPI.getComicPage(session.id, page.name);
-      setPageData(prev => ({ ...prev, [page.name]: result.dataUrl }));
+      if (sequence !== loadSequenceRef.current) return;
+      setPageData(prev => limitComicPageData({ ...prev, [page.name]: result.dataUrl }, page.name));
       setPageErrors(prev => {
         if (!prev[page.name]) return prev;
         const next = { ...prev };
@@ -7517,12 +7750,13 @@ function ViewerApp() {
         return next;
       });
     } catch (pageError) {
+      if (sequence !== loadSequenceRef.current || pageError?.name === 'AbortError') return;
       setPageErrors(prev => ({
         ...prev,
         [page.name]: pageError.message || String(pageError),
       }));
     } finally {
-      loadingPagesRef.current.delete(page.name);
+      loadingPagesRef.current.delete(requestKey);
     }
   }, [pageData, pages, session]);
 
@@ -7894,14 +8128,14 @@ function ViewerApp() {
 
   useEffect(() => {
     if (!session || session.type !== 'comic' || pages.length === 0) return;
-    loadComicPage(pageIndex);
-    loadComicPage(pageIndex + 1);
+    loadComicPageRef.current?.(pageIndex);
+    loadComicPageRef.current?.(pageIndex + 1);
     if (flowMode === 'scroll') {
       for (let index = pageIndex; index < Math.min(pageIndex + 8, pages.length); index += 1) {
-        loadComicPage(index);
+        loadComicPageRef.current?.(index);
       }
     }
-  }, [flowMode, loadComicPage, pageIndex, pages.length, session]);
+  }, [flowMode, pageIndex, pages.length, session]);
 
   useEffect(() => {
     persistState();
@@ -8055,6 +8289,7 @@ function ViewerApp() {
   }, [flowMode, loading, pageCount, pageCountReadyForNavigation, pageIndex, readiveResumeReady, resolveSpreadNavigationIndex, selectedFlowMode, selectedPageIndex, session, setPageIndexSynced, textOffsets, textPages]);
 
   const movePage = useCallback(delta => {
+    comicScrollRestoreRef.current?.cancel?.();
         if (bookPageDragActiveRef.current) return;
     const currentIndex = clamp(pageIndexRef.current, 0, Math.max(0, pageCount - 1));
     if (delta > 0 && pageCount > 0 && flowMode !== 'scroll' && isForwardBoundaryIndex(currentIndex)) {
@@ -8160,9 +8395,11 @@ function ViewerApp() {
 
   const addBookmark = useCallback(() => {
     if (!session) return;
+    const comicScrollPosition = session.type === 'comic' && flowMode === 'scroll'
+        ? captureComicScrollPosition(scrollRef.current, pageIndex) : null;
     const bookmarkPageIndex = flowMode === 'scroll' && (session.type === 'epub' || session.type === 'text')
       ? clamp(visibleReaderIndexRef.current, 0, Math.max(0, pageCount - 1))
-      : pageIndex;
+      : comicScrollPosition?.pageIndex ?? pageIndex;
     const visibleText = session.type === 'comic'
       ? pages[bookmarkPageIndex]?.basename || `Page ${bookmarkPageIndex + 1}`
       : splitSentences(
@@ -8176,6 +8413,7 @@ function ViewerApp() {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       pageIndex: bookmarkPageIndex,
       ...(session.type === 'epub' ? { epubPosition: captureCurrentEpubPosition(bookmarkPageIndex) } : {}),
+      ...(comicScrollPosition ? { comicScrollPosition } : {}),
       scrollPercent,
       flowMode: selectedFlowMode,
       label: session.type === 'comic' || session.type === 'pdf'
@@ -8202,6 +8440,7 @@ function ViewerApp() {
   };
 
   const goBookmark = bookmark => {
+    comicScrollRestoreRef.current?.cancel?.();
     cancelMotion();
         resetScrollZoomOffset();
         previousFlowPositionRef.current = null;
@@ -8226,6 +8465,9 @@ function ViewerApp() {
           session?.type === 'comic' && webtoonDecision?.sessionId === session.id && webtoonDecision.decision === 'scroll') === 'scroll') {
         if (Number.isInteger(bookmark.coverEditPageIndex) && ['comic', 'epub'].includes(session?.type)) {
             restoreCoverEditedScrollPage(session.type, targetPageIndex);
+        } else if (session?.type === 'comic') {
+            const savedComicPosition = bookmark.comicScrollPosition?.pageIndex === targetPageIndex ? bookmark.comicScrollPosition : null;
+            restoreSavedScrollPosition(session, bookmark.scrollPercent, normalizeComicScrollPosition(savedComicPosition, targetPageIndex));
         } else node.scrollTop = ((node.scrollHeight - node.clientHeight) * (Number(bookmark.scrollPercent) || 0)) / 100;
       } else {
         node?.scrollTo?.({ top: 0 });
@@ -8915,7 +9157,7 @@ function ViewerApp() {
   const getDragPanTarget = useCallback(target => {
     if (!(session?.type === 'comic' || session?.type === 'pdf')) return null;
     if (target?.closest?.('.viewer-pdf-text-layer')) return null;
-    return target?.closest?.('.viewer-comic-image, .viewer-pdf-canvas-wrap') || null;
+    return target?.closest?.('.viewer-comic-image, .viewer-comic-tiled-page, .viewer-pdf-canvas-wrap') || null;
   }, [session?.type]);
 
   const isDragPanTarget = useCallback(target => Boolean(getDragPanTarget(target)), [getDragPanTarget]);
@@ -9433,29 +9675,25 @@ function ViewerApp() {
         objectPosition: options.objectPosition,
       }
       : undefined);
-    if (pageError && !pageData[page.name]) {
+    if (pageError) {
       return (
-        <div key={page.name} className="viewer-comic-placeholder is-error" data-page-index={index}>
+        <div key={page.name} className="viewer-comic-placeholder is-error" data-page-index={options.omitPageIndex ? undefined : index}>
           {viewerText('viewer.common.image_load_failed', '{name} 이미지를 불러오지 못했습니다.', { name: page.basename || page.name })}
         </div>
       );
     }
-    if (!src) {
-      return (
-        <div key={page.name} className="viewer-comic-placeholder" data-page-index={index}>
-          {viewerText('viewer.common.loading', 'Loading...')}
-        </div>
-      );
-    }
+    const PageFrame = flowMode === 'scroll' && /\.png$/i.test(page.name || '') ? ComicScrollPngPage : ComicPageFrame;
     return (
-      <ComicPageFrame
-        key={page.name}
+      <PageFrame
+        key={`${session.id}:${page.name}`}
         page={page}
-        index={index}
+        index={options.omitPageIndex ? undefined : index}
         src={src}
+        onMissingSource={() => loadComicPage(index, { force: true })}
         viewMode={comicViewMode}
         imageClassName={imageClassName}
         frameStyle={frameStyle}
+        scrollRef={scrollRef}
         imageStyle={fittedImageStyle}
         imageFit={options.objectFit || 'cover'}
         imagePosition={options.objectPosition}
@@ -9466,8 +9704,9 @@ function ViewerApp() {
           const { naturalWidth, naturalHeight } = event.currentTarget;
           rememberComicPageImageSize(page.name, naturalWidth, naturalHeight);
         }}
-        onImageError={() => {
-          if (page?.pageUrl && !pageData[page.name]) {
+        onImageError={event => {
+          const failedSource = event.currentTarget.currentSrc || event.currentTarget.getAttribute('src') || '';
+          if (page?.pageUrl && !pageData[page.name] && !failedSource.startsWith('data:')) {
             loadComicPage(index, { force: true });
             return;
           }
@@ -9485,9 +9724,15 @@ function ViewerApp() {
     if (pageCount === 0) return <div className="viewer-state">{viewerText('viewer.common.no_pages', 'No pages')}</div>;
     if (flowMode === 'scroll') {
       return (
-        <div className="viewer-comic-scroll">
-          {pages.map((page, index) => renderComicImage(page, index, 1))}
-        </div>
+        <ViewerComicScroll
+            key={session.id}
+            pages={pages}
+            scrollRef={scrollRef}
+            pageIndex={comicScrollRestoreRef.current?.position.pageIndex ?? pageIndex}
+            layoutKey={`${comicViewMode}:${zoom}:${readerViewport.width}:${readerViewport.height}:${getWebtoonDisplayWidth(zoom)}`}
+            getPageStyle={page => getComicImageStyle(page, 1)}
+            renderPage={(page, index) => renderComicImage(page, index, 1, { omitPageIndex: true })}
+        />
       );
     }
     const isBookPageEffect = readerSettings.pageEffect === 'page' && flowMode === 'spread';
@@ -10069,7 +10314,15 @@ function ViewerApp() {
     if (!session) return <div className="viewer-state">{viewerText('viewer.common.no_book', 'No book')}</div>;
     if (loading && (session.type === 'text' || session.type === 'epub')) return <div className="viewer-state">{viewerText('viewer.common.loading', 'Loading...')}</div>;
     if (session.type === 'epub' && (!epubLayoutReady || !readiveResumeReady)) return <div className="viewer-state">{viewerText('viewer.common.loading', 'Loading...')}</div>;
-    if (session.type === 'comic') return renderComic();
+    if (session.type === 'comic') return <>
+        {!loading && flowMode !== 'scroll' && <ComicNearbyPages
+            key={session.id}
+            pages={pages}
+            pageIndex={pageIndex}
+            onImageSize={rememberComicPageImageSize}
+        />}
+        {renderComic()}
+    </>;
     if (session.type === 'pdf') return renderPdf();
     if (session.type === 'text') return renderReaderPages(textReaderItems);
     if (session.type === 'epub') return renderReaderPages(epubPages);
@@ -10215,7 +10468,7 @@ function ViewerApp() {
             page,
             pageIndex: index,
             pageNumber: index + 1,
-            src: fallbackSrc || page?.pageUrl,
+            src: fallbackSrc || comicBackgroundPageUrl(page?.pageUrl),
             hasFallbackSrc: Boolean(fallbackSrc),
             onLoad: event => {
               const { naturalWidth, naturalHeight } = event.currentTarget;
@@ -10647,7 +10900,7 @@ function ViewerApp() {
                     aria-label={viewerText('viewer.navigation.page_nav', '페이지 네비게이션')}
                     onWheel={handleSlideNavWheel}
                 >
-                    {!initialRenderLoading && (session?.type !== 'epub' || slideNavOpen) && renderSlideThumbs()}
+                    {!initialRenderLoading && (!['epub', 'comic'].includes(session?.type) || slideNavOpen) && renderSlideThumbs()}
                 </div>
                 <div className="viewer-slide-buttons" role="group" aria-label={viewerText('viewer.toolbar.page_navigation', '페이지 이동')}>
                     <ToolbarButton

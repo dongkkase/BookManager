@@ -49,6 +49,28 @@ async function until(predicate, message) {
     }
     throw new Error(message + ': ' + document.body.innerText.slice(0, 400));
 }
+function observeSampleResponse(response, onSample) {
+    const body = response.body;
+    if (!body) return response;
+    let observed = false;
+    const stream = new Proxy(body, {
+        get(target, key) {
+            if (key === 'getReader') return (...args) => {
+                if (!observed) { observed = true; onSample(); }
+                return target.getReader(...args);
+            };
+            const value = Reflect.get(target, key, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+        },
+    });
+    return new Proxy(response, {
+        get(target, key) {
+            if (key === 'body') return stream;
+            const value = Reflect.get(target, key, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+        },
+    });
+}
 const pages = Array.from({ length: 8 }, (_, index) => {
     const canvas = document.createElement('canvas');
     canvas.width = index === 3 ? 960 : 480;
@@ -312,14 +334,17 @@ window.checkWebtoonAutoFlow = async () => {
     localStorage.setItem('bookmanager-viewer-prefs:comic', JSON.stringify({ flowMode: 'auto', spreadCoverFirst: true, slideNavOpen: false, readerSettings: { pageEffect: 'none' } }));
     const filePath = '/fixture/long-pages.cbz';
     localStorage.removeItem('bookmanager-viewer-bookmarks:' + filePath);
-    localStorage.setItem('bookmanager-viewer-state:' + filePath, JSON.stringify({ pageIndex: 2, pageCount: 7, scrollPercent: 40 }));
+    localStorage.setItem('bookmanager-viewer-state:' + filePath, JSON.stringify({ pageIndex: 2, pageCount: 7, scrollPercent: 40, comicScrollPosition: { pageIndex: 2, offsetRatio: 0.3 } }));
     await loadSession({ id: 'webtoon-resume', type: 'comic', filePath, fileName: 'Long pages.cbz', preview: true });
     await until(() => document.querySelector('.viewer-comic-scroll') && !document.querySelector('.viewer-app').classList.contains('is-initial-render-loading'), 'Tall comic pages were not classified as scroll');
-    await until(() => {
+    const atSavedComicPosition = () => {
         const content = document.querySelector('.viewer-content');
-        const maximum = content.scrollHeight - content.clientHeight;
-        return maximum > 0 && Math.abs(content.scrollTop / maximum - 0.4) < 0.02;
-    }, 'Webtoon auto detection lost the saved scroll position');
+        const target = content.querySelector('.viewer-comic-scroll [data-page-index="2"]');
+        if (!target) return false;
+        const rect = target.getBoundingClientRect();
+        return Math.abs(content.getBoundingClientRect().top + content.clientTop - rect.top - rect.height * 0.3) <= 2;
+    };
+    await until(atSavedComicPosition, 'Webtoon auto detection lost the saved scroll position');
     check(button('자동 보기')?.classList.contains('is-active'), 'Webtoon classification changed the selected auto mode');
     check(prefs().flowMode === 'auto', 'Webtoon classification persisted scroll instead of auto');
     await window.checkWebtoonWidthLimit({ reduced: true });
@@ -328,7 +353,9 @@ window.checkWebtoonAutoFlow = async () => {
     [...document.querySelectorAll('.viewer-bookmark-menu button')].find(node => node.textContent.startsWith('책갈피 추가')).click();
     await until(() => document.querySelector('.viewer-bookmark-list button'), 'Webtoon bookmark was not added');
     const bookmark = JSON.parse(localStorage.getItem('bookmanager-viewer-bookmarks:' + filePath))[0];
-    check(bookmark.flowMode === 'auto' && Math.abs(bookmark.scrollPercent - 40) <= 1, 'Webtoon bookmark did not store the selected mode and scroll position');
+    check(bookmark.flowMode === 'auto' && bookmark.comicScrollPosition?.pageIndex === 2
+        && Math.abs(bookmark.comicScrollPosition.offsetRatio - 0.3) <= 0.002,
+        'Webtoon bookmark did not store the selected mode and scroll position');
     button('책갈피').click();
     button('한장보기').click();
     await expectLayout(false, 'single');
@@ -338,11 +365,7 @@ window.checkWebtoonAutoFlow = async () => {
     button('책갈피').click();
     await until(() => document.querySelector('.viewer-bookmark-list button'), 'Saved webtoon bookmark missing');
     document.querySelector('.viewer-bookmark-list button').click();
-    await until(() => {
-        const content = document.querySelector('.viewer-content');
-        const maximum = content.scrollHeight - content.clientHeight;
-        return document.querySelector('.viewer-comic-scroll') && maximum > 0 && Math.abs(content.scrollTop / maximum - 0.4) < 0.02;
-    }, 'Automatic flow restoration overwrote the webtoon bookmark scroll position');
+    await until(atSavedComicPosition, 'Automatic flow restoration overwrote the webtoon bookmark scroll position');
     check(button('자동 보기')?.classList.contains('is-active'), 'Webtoon bookmark did not restore auto mode');
     button('한장보기').click();
     await expectLayout(false, 'single');
@@ -368,10 +391,10 @@ window.checkArchiveSizeAutoFlow = async () => {
     localStorage.setItem('bookmanager-viewer-prefs:comic', JSON.stringify({ flowMode: 'auto', spreadCoverFirst: true, slideNavOpen: false, readerSettings: { pageEffect: 'none' } }));
     const originalFetch = window.fetch;
     let sampleRequests = 0;
-    window.fetch = (input, ...args) => {
+    window.fetch = async (input, ...args) => {
         const url = typeof input === 'string' ? input : input?.url || String(input);
-        if (url.startsWith('bookmanager-comic:')) sampleRequests += 1;
-        return originalFetch.call(window, input, ...args);
+        const response = await originalFetch.call(window, input, ...args);
+        return observeSampleResponse(response, () => { if (url.startsWith('bookmanager-comic:')) sampleRequests += 1; });
     };
     const open = id => loadSession({ id, type: 'comic', filePath: '/fixture/' + id + '.cbz', fileName: 'Ordinary page images.cbz', preview: true });
     const expectAutoScroll = async label => {
@@ -417,10 +440,10 @@ window.checkWebtoonReadingDirectionAutoFlow = async () => {
     localStorage.setItem('bookmanager-viewer-prefs:comic', JSON.stringify({ flowMode: 'auto', viewMode: 'fit', zoom: 100, spreadCoverFirst: true, slideNavOpen: false, readerSettings: { pageEffect: 'none' } }));
     const originalFetch = window.fetch;
     let sampleRequests = 0;
-    window.fetch = (input, ...args) => {
+    window.fetch = async (input, ...args) => {
         const url = typeof input === 'string' ? input : input?.url || String(input);
-        if (url.startsWith('bookmanager-comic:')) sampleRequests += 1;
-        return originalFetch.call(window, input, ...args);
+        const response = await originalFetch.call(window, input, ...args);
+        return observeSampleResponse(response, () => { if (url.startsWith('bookmanager-comic:')) sampleRequests += 1; });
     };
     const open = id => loadSession({ id, type: 'comic', filePath: '/fixture/' + id + '.cbz', fileName: 'Ordinary proportions.cbz', preview: true });
     const expectAutoScroll = async label => {
@@ -516,10 +539,11 @@ let webtoonCenterBeforeResize = null;
 window.captureWebtoonResizePosition = async () => {
     const content = document.querySelector('.viewer-content');
     content.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 0 }));
-    content.scrollTop = (content.scrollHeight - content.clientHeight) * 0.4;
+    const target = content.querySelector('.viewer-comic-scroll [data-page-index="3"]');
+    check(target, 'Webtoon resize fixture is missing its body page');
+    target.scrollIntoView({ block: 'start' });
     await settle();
     await until(() => webtoonCenterPosition(), 'No loaded webtoon image at the viewport center');
-    check(Math.abs(content.scrollTop / (content.scrollHeight - content.clientHeight) - 0.4) < 0.01, 'Webtoon resize fixture did not reach the middle of the document');
     webtoonCenterBeforeResize = webtoonCenterPosition();
     check(webtoonCenterBeforeResize.index > 0, 'Webtoon resize fixture must inspect body content after the cover');
 };
@@ -541,7 +565,8 @@ const loadedMixedImages = () => [...document.querySelectorAll('.viewer-comic-scr
 async function expectMixedWidth(expectedWidth, expectedZoom, savedZoom = expectedZoom) {
     await until(() => {
         const images = loadedMixedImages();
-        return images.length === 20 && images.every(image => Math.abs(image.getBoundingClientRect().width - expectedWidth) <= 1.1)
+        const mounted = document.querySelectorAll('.viewer-comic-scroll .viewer-comic-image').length;
+        return images.length >= 2 && images.length === mounted && images.every(image => Math.abs(image.getBoundingClientRect().width - expectedWidth) <= 1.1)
             && (expectedZoom === null ? displayedZoom() < 100 : displayedZoom() === expectedZoom);
     }, 'Mixed-width webtoon did not settle to its shared width: ' + JSON.stringify({ expectedWidth, expectedZoom, zoom: displayedZoom(), widths: comicWidths() }));
     await settle();
@@ -581,7 +606,15 @@ window.checkMixedWebtoonWidths = async () => {
     await fresh('delayed');
     const trace = [];
     const deadline = performance.now() + 12000;
-    while (loadedMixedImages().length < 20 && performance.now() < deadline) {
+    await until(() => loadedMixedImages().some(image => image.naturalWidth === 1200) && Math.max(...comicWidths()) <= 800.5,
+        'Delayed fixture did not show its capped cover before nearby body pages');
+    trace.push({ loaded: loadedMixedImages().length, zoom: displayedZoom(), widths: [...new Set(comicWidths())] });
+    const content = document.querySelector('.viewer-content');
+    content.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 0 }));
+    const narrowerPage = content.querySelector('.viewer-comic-scroll [data-page-index="2"]');
+    check(narrowerPage, 'Delayed fixture is missing its narrower page anchor');
+    narrowerPage.scrollIntoView({ block: 'start' });
+    while ((!loadedMixedImages().some(image => image.naturalWidth === 530) || comicWidths().some(width => Math.abs(width - 530) > 1.1)) && performance.now() < deadline) {
         const snapshot = { loaded: loadedMixedImages().length, zoom: displayedZoom(), widths: [...new Set(comicWidths())] };
         if (snapshot.loaded > 0 && JSON.stringify(snapshot) !== JSON.stringify(trace.at(-1))) trace.push(snapshot);
         await frame();
@@ -605,10 +638,10 @@ window.checkShortVariableWebtoon = async () => {
     check(totalEncodedBytes / shortVariablePages.length > 128 * 1024, 'Variable-page fixture must not take the small-file shortcut');
     const requestedSamples = [];
     const originalFetch = window.fetch;
-    window.fetch = (input, ...args) => {
+    window.fetch = async (input, ...args) => {
         const url = typeof input === 'string' ? input : input?.url || String(input);
-        if (url.startsWith('bookmanager-comic://fixture/short-variable/')) requestedSamples.push(url);
-        return originalFetch.call(window, input, ...args);
+        const response = await originalFetch.call(window, input, ...args);
+        return observeSampleResponse(response, () => { if (url.startsWith('bookmanager-comic://fixture/short-variable/')) requestedSamples.push(url); });
     };
     try {
         await loadSession({ id: 'short-variable-pages', type: 'comic', filePath: '/fixture/short-variable-pages.zip', fileName: 'Variable page proportions.zip', preview: true });
@@ -616,7 +649,10 @@ window.checkShortVariableWebtoon = async () => {
         await window.checkWebtoonWidthLimit({ reduced: true });
         check(button('자동 보기')?.classList.contains('is-active') && prefs().flowMode === 'auto', 'Ratio classification must preserve the selected auto mode');
         check(requestedSamples.length === 12, 'Ratio classification must inspect the twelve sampled image headers');
-        await until(() => [...document.querySelectorAll('.viewer-comic-scroll .viewer-comic-image')].filter(image => image.complete && image.naturalWidth > 0).length === 17, 'Synthetic page headers were not decoded');
+        await until(() => {
+            const images = [...document.querySelectorAll('.viewer-comic-scroll .viewer-comic-image')];
+            return images.length > 0 && images.every(image => image.complete && image.naturalWidth > 0);
+        }, 'Mounted synthetic page headers were not decoded');
         for (const image of document.querySelectorAll('.viewer-comic-scroll .viewer-comic-image')) {
             const index = Number(image.closest('[data-page-index]').dataset.pageIndex);
             check(image.naturalWidth === shortVariableMetrics[index][0] && image.naturalHeight === shortVariableMetrics[index][1], 'Synthetic PNG header dimensions do not match the source metadata');

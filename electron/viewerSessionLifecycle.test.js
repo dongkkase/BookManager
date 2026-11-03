@@ -1,10 +1,91 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ViewerSessionManager } from './viewerSessions.js';
 import { replaceZipEntry } from './core/zipArchive.js';
+import { comicRequestAbortedError } from './viewerComicQueue.js';
+
+test('메인 문서 새로고침은 이전 만화 요청을 취소하고 같은 세션을 다시 활성화한다', async t => {
+    const source = await fs.readFile(new URL('./viewerWindow.js', import.meta.url), 'utf8');
+    const section = (startText, endText) => {
+        const start = source.indexOf(startText);
+        const end = source.indexOf(endText, start);
+        assert.ok(start >= 0 && end > start);
+        return source.slice(start, end);
+    };
+    const sessions = new ViewerSessionManager();
+    const currentSession = sessions.create('/reload-current.7z', { skipExistenceCheck: true, skipAdjacent: true });
+    const pendingSession = sessions.create('/reload-pending.7z', { skipExistenceCheck: true, skipAdjacent: true });
+    t.after(() => {
+        sessions.cancelComicSession(currentSession.id);
+        sessions.cancelComicSession(pendingSession.id);
+    });
+    const viewerWindow = { webContents: new EventEmitter() };
+    const context = { window: viewerWindow, kind: 'reader', currentSession, pendingSession };
+    const oldCurrentGroup = sessions.comicRequestGroups.get(currentSession.id);
+    const oldPendingGroup = sessions.comicRequestGroups.get(pendingSession.id);
+    const signals = [];
+    const untilCancelled = signal => new Promise((resolve, reject) => {
+        signals.push(signal);
+        signal.addEventListener('abort', () => reject(comicRequestAbortedError()), { once: true });
+    });
+    const requests = [currentSession, pendingSession].map(session => (
+        sessions.runComicRequest(session, 'active', untilCancelled).catch(error => error)
+    ));
+    let queuedStarted = false;
+    requests.push(sessions.runComicRequest(currentSession, 'queued', () => { queuedStarted = true; }).catch(error => error));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(signals.length, 2);
+
+    new Function('viewerWindow', 'context', 'sessions', section(
+        "viewerWindow.webContents.on('did-start-navigation'",
+        "viewerWindow.webContents.on('did-finish-load'",
+    ))(viewerWindow, context, sessions);
+    const navigate = (isInPlace, isMainFrame) => viewerWindow.webContents.emit('did-start-navigation', {}, 'viewer.html', isInPlace, isMainFrame);
+    navigate(false, false);
+    navigate(true, true);
+    context.window = {};
+    navigate(false, true);
+    context.window = viewerWindow;
+    assert.equal(oldCurrentGroup.cancelled, false, '하위 프레임·동일 문서·이전 창의 이동은 현재 세션을 취소하지 않는다');
+    assert.equal(oldPendingGroup.cancelled, false);
+    assert.ok(signals.every(signal => !signal.aborted));
+
+    navigate(false, true);
+    assert.ok(signals.every(signal => signal.aborted));
+    assert.equal(oldCurrentGroup.cancelled, true);
+    assert.equal(oldPendingGroup.cancelled, true);
+    assert.ok((await Promise.all(requests)).every(error => error.name === 'AbortError'));
+    assert.equal(queuedStarted, false);
+
+    let getCurrentSession;
+    new Function('ipcMain', 'viewerContextForSender', 'sessions', section(
+        "ipcMain.handle('viewer:getCurrentSession'",
+        "ipcMain.handle('viewer:listComicPages'",
+    ))({ handle: (_channel, handler) => { getCurrentSession = handler; } }, () => context, sessions);
+    assert.equal(await getCurrentSession({ sender: viewerWindow.webContents }), currentSession);
+    assert.notEqual(sessions.comicRequestGroups.get(currentSession.id), oldCurrentGroup);
+    assert.equal(await sessions.runComicRequest(currentSession, 'reloaded', () => 'new page'), 'new page');
+
+    const setContextSession = new Function('sessions', 'releasePreview', `${section(
+        'const setContextSession =',
+        'const mainAppWindow =',
+    )} return setContextSession;`)(sessions, () => {});
+    let sentSession;
+    new Function('viewerWindow', 'context', 'sessions', 'setContextSession', 'sendSession', 'sendFullscreenState', 'console', section(
+        "viewerWindow.webContents.on('did-finish-load'",
+        "viewerWindow.on('enter-full-screen'",
+    ))(viewerWindow, context, sessions, setContextSession, (_context, session) => { sentSession = session; }, () => {}, { info() {} });
+    viewerWindow.webContents.emit('did-finish-load');
+    assert.equal(context.currentSession, pendingSession);
+    assert.equal(context.pendingSession, null);
+    assert.equal(sentSession, pendingSession);
+    assert.notEqual(sessions.comicRequestGroups.get(pendingSession.id), oldPendingGroup);
+    assert.equal(await sessions.runComicRequest(pendingSession, 'loaded', () => 'pending page'), 'pending page');
+});
 
 test('정리된 세션의 늦은 만화 목록 응답은 고아 캐시를 만들지 않는다', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'viewer-session-lifecycle-'));
@@ -23,7 +104,9 @@ test('정리된 세션의 늦은 만화 목록 응답은 고아 캐시를 만들
                 requests.push(manager.listComicPages(session.id));
             }
             release('');
-            await Promise.all(requests);
+            const results = await Promise.allSettled(requests);
+            assert.equal(results.filter(result => result.status === 'fulfilled').length, 16);
+            assert.ok(results.filter(result => result.status === 'rejected').every(result => result.reason.name === 'AbortError'));
             assert.equal(manager.sessions.size, 16);
             assert.equal(manager.comicArchiveEntryCaches.size, 16);
             assert.ok([...manager.comicArchiveEntryCaches.keys()].every(id => manager.sessions.has(id)));
