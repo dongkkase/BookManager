@@ -4,7 +4,7 @@ export const KOBO_LANGUAGES = ['en', 'fr', 'de', 'it', 'es', 'nl', 'pt', 'ja', '
 export const AUDIBLE_REGIONS = ['us', 'uk', 'de', 'fr', 'it', 'es', 'ca', 'au', 'jp', 'in'];
 
 export const METADATA_API_SOURCE_NAMES = [
-    '리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine',
+    '리디북스', '문피아', '한국웹툰', 'YES24', 'Google Books', 'Anilist', 'Vine',
     'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB',
     'Amazon', 'Audible', 'AudNexus', 'Libro.fm',
 ];

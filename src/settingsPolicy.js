@@ -128,7 +128,6 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
     const normalizedApiKeys = {
         ...apiKeys,
         yes24: String(apiKeys.yes24 || '').trim(),
-        aladin: String(apiKeys.aladin || '').trim(),
         vine: String(apiKeys.vine || '').trim(),
         google: String(apiKeys.google || '').trim(),
         hardcover: normalizeHardcoverToken(apiKeys.hardcover),

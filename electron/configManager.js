@@ -10,9 +10,9 @@ import {
 } from './dataPaths.js';
 
 const SUPPORTED_LANGUAGES = new Set(['ko', 'en', 'ja']);
-const COMIC_METADATA_API_SOURCES = new Set(['리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
-const BOOK_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
-const PDF_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
+const COMIC_METADATA_API_SOURCES = new Set(['리디북스', '문피아', '한국웹툰', 'YES24', 'Google Books', 'Anilist', 'Vine', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
+const BOOK_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', 'Google Books', 'Amazon', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
+const PDF_METADATA_API_SOURCES = new Set(['리디북스', '문피아', 'YES24', 'Google Books', 'Amazon', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
 const AUDIO_METADATA_API_SOURCES = new Set([...BOOK_METADATA_API_SOURCES, 'Audible', 'AudNexus', 'Libro.fm']);
 const AI_PROVIDERS = new Set(['Gemini', 'OpenAI']);
 const VIEWER_PROGRAM_TYPES = ['comic', 'epub', 'pdf', 'text'];
@@ -25,7 +25,7 @@ function normalizeMetadataApiSource(value, sources, fallback = '리디북스', e
     const source = String(value || '').trim();
     if (source === '통합검색') return source;
     if (sources.has(source) && isMetadataApiSourceEnabled(source, enabledMap)) return source;
-    const requiredKeys = { YES24: 'yes24', '알라딘': 'aladin', 'Google Books': 'google', Vine: 'vine', Hardcover: 'hardcover' };
+    const requiredKeys = { YES24: 'yes24', 'Google Books': 'google', Vine: 'vine', Hardcover: 'hardcover' };
     const available = candidate => {
         if (!isMetadataApiSourceEnabled(candidate, enabledMap)) return false;
         const key = requiredKeys[candidate];
@@ -333,7 +333,6 @@ export class ConfigManager {
         metadata_api_enabled: normalizeMetadataApiEnabled(),
       api_keys: {
         yes24: '',
-        aladin: '',
         vine: '',
         google: '',
         hardcover: '',

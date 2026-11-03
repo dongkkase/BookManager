@@ -1,5 +1,5 @@
 import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
-import { GITHUB_URL, READIVE_APP_STORE_URL, SPONSOR_URL } from '../appShell';
+import { GITHUB_URL, READIVE_APP_STORE_URL, READIVE_GOOGLE_PLAY_URL, SPONSOR_URL } from '../appShell';
 import { useModalAccessibility } from '../hooks/useModalAccessibility';
 import { FaIcon } from './FaIcon';
 import '../styles/AppSupportActions.css';
@@ -91,8 +91,8 @@ export function AppSupportActions({ t, showToast }) {
                 type="button"
                 className="app-support-button app-support-android"
                 aria-label={t('support.android')}
-                aria-disabled="true"
                 data-tooltip={t('support.android')}
+                onClick={() => openExternal(READIVE_GOOGLE_PLAY_URL, { browser: true })}
             >
                 <FaIcon name="android" size={18} />
             </button>

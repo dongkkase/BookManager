@@ -145,6 +145,23 @@ test('new provider aliases route through IPC and the actual dispatcher to all te
     }
 });
 
+test('retired Aladin requests are rejected before cache access or network requests even with legacy credentials', async () => {
+    for (const metadata_api_enabled of [undefined, {}, { '알라딘': true }, { '알라딘': false }]) {
+        for (const apiSource of ['알라딘', 'aladin', 'Aladin']) {
+            for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
+                const harness = createHarness({ initialConfig: { metadata_api_enabled, api_keys: { aladin: 'saved-key' } } });
+                const result = await harness.handler({}, { apiSource, bookType, query: 'Sample', apiKeys: { aladin: 'request-key' } });
+                assert.equal(result.success, false);
+                assert.equal(result.api, '알라딘');
+                assert.equal(result.cached, false);
+                assert.equal(harness.opened, 0);
+                assert.equal(harness.cacheReads, 0);
+                assert.equal(harness.calls.length, 0);
+            }
+        }
+    }
+});
+
 test('disabled providers reject canonical names and aliases before opening cache or sending requests', async () => {
     for (const [alias, canonical, bookType] of [
         ['리디북스', '리디북스', 'comic'], ['munpia', '문피아', 'book'], ['kmas', '한국웹툰', 'comic'],

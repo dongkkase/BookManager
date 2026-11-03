@@ -111,7 +111,6 @@ const FALLBACK_SYSTEM_FONT_OPTIONS = [
 ];
 const METADATA_PROVIDER_KEY_LABELS = {
     yes24: 'YES24 API Key',
-    aladin: 'Aladin TTBKey',
     google: 'Google Books API Key',
     vine: 'Comic Vine API Key',
     hardcover: 'Hardcover API Token',
@@ -172,7 +171,6 @@ const NAVER_PHOTO_SETTINGS_TEXT = {
 
 const DEFAULT_API_KEYS = {
     yes24: '',
-  aladin: '',
   vine: '',
   google: '',
     hardcover: '',
@@ -1153,25 +1151,6 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
 
     const renderProviderSettings = source => {
         return <>
-            {source.value === '알라딘' && (
-                    <p className="settings-help settings-aladin-api-notice">
-                        {label('aladin_openapi_shutdown_notice', '알라딘 OpenAPI 서비스 종료 예정 26년 10월 30일')}{' '}
-                        <a
-                            className="settings-help-link"
-                            href="https://blog.aladin.co.kr/openapi/group/18264538"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={event => {
-                                if (window.electronAPI?.openExternal) {
-                                    event.preventDefault();
-                                    window.electronAPI.openExternal(event.currentTarget.href);
-                                }
-                            }}
-                        >
-                            [{label('aladin_openapi_shutdown_details', '자세히보기')}]
-                        </a>
-                    </p>
-            )}
             {source.value === 'iTunes' && <>
                     <div className="settings-row settings-control-field">
                         <label className="settings-label" htmlFor="settings-itunes-country">{t('metadata_provider_itunes_country')}</label>
@@ -1806,7 +1785,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                                 const enabled = isMetadataApiSourceEnabled(source.value, localConfig.metadata_api_enabled);
                                 const key = requiredApiKeyForSource(source.value);
                                 const ready = apiSourceHasRequiredKey(source.value, localConfig.api_keys);
-                                const hasSettings = ['알라딘', 'iTunes', 'Kobo', 'Audible'].includes(source.value);
+                                const hasSettings = ['iTunes', 'Kobo', 'Audible'].includes(source.value);
                                 const descriptionKey = source.labelKey.replace('api_source_', 'metadata_provider_description_');
                                 const descriptionId = `settings-${descriptionKey}`;
                                 return (
@@ -1817,7 +1796,7 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
                                                 {enabled && !ready && <span className="settings-provider-status is-setup_required">{t('metadata_provider_setup_required')}</span>}
                                             </div>
                                             {key && renderSecretInput(key, key === 'yes24' ? 'yk_live_...' : '', false,
-                                                key === 'aladin' ? 'TTBKey' : key === 'hardcover' ? 'API Token' : 'API Key')}
+                                                key === 'hardcover' ? 'API Token' : 'API Key')}
                                             <div className="settings-provider-actions">
                                                 <button type="button" role="switch" className="settings-provider-switch"
                                                     aria-label={apiSourceLabel(source)} aria-checked={enabled} aria-describedby={descriptionId}

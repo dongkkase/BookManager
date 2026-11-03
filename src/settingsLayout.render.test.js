@@ -39,7 +39,7 @@ async function until(predicate, message) {
 const categories = ['basic', 'processing', 'folder', 'viewer', 'api', 'ttsApi', 'privacy', 'licenses'];
 const apiSections = ['preferred', 'providers', 'ai', 'tags', 'cache'];
 const providerSources = [
-    '리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine',
+    '리디북스', '문피아', '한국웹툰', 'YES24', 'Google Books', 'Anilist', 'Vine',
     'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB',
     'Amazon', 'Audible', 'AudNexus', 'Libro.fm',
 ];
@@ -252,7 +252,8 @@ async function changeProviderSetting(id, value) {
 }
 function checkProviderCards(context, enabled = {}) {
     const cards = providerCards();
-    check(cards.length === 19, context + ': expected all 19 source cards');
+    check(cards.length === 18, context + ': expected all 18 source cards');
+    check(!providerCard('알라딘') && !document.getElementById('settings-secret-aladin'), context + ': retired Aladin settings must not be shown');
     for (const source of providerSources) {
         const card = providerCard(source);
         const toggle = providerSwitch(source);
@@ -547,7 +548,7 @@ async function runInteractions() {
             check(document.querySelector(selector).inert, 'Source help left the background interactive: ' + selector);
         }
         const registration = dialog.querySelector('[data-link-kind="registration"]');
-        const requiresKey = source === 'naver' || ['YES24', '알라딘', 'Google Books', 'Vine', 'Hardcover'].includes(source);
+        const requiresKey = source === 'naver' || ['YES24', 'Google Books', 'Vine', 'Hardcover'].includes(source);
         check(Boolean(registration) === requiresKey, 'Registration link does not match the source credential requirements: ' + source);
         for (const link of dialog.querySelectorAll('a[href]')) {
             const linksBefore = calls.externalLinks.length;
@@ -714,7 +715,7 @@ async function runProviderInteractions() {
     await open({ initialTab: 'api', config: original });
     await navigateApiSection('providers');
     checkProviderCards('legacy settings without an enabled map');
-    for (const key of ['yes24', 'aladin', 'google', 'vine', 'hardcover']) {
+    for (const key of ['yes24', 'google', 'vine', 'hardcover']) {
         const secret = document.getElementById('settings-secret-' + key);
         const reveal = secret.closest('.settings-provider-secret')?.querySelector('button');
         check(reveal && reveal.getAttribute('aria-controls') === secret.id, 'Provider secret reveal button is missing: ' + key);
@@ -1248,7 +1249,7 @@ function checkSidebarMenuLayout(context) {
 function checkProviderLayout(context) {
     checkProviderCards(context);
     const helpCards = [...providerCards(), sourceHelpCard('naver')];
-    check(helpCards.length === 20, context + ': missing source help card');
+    check(helpCards.length === 19, context + ': missing source help card');
     for (const card of helpCards) {
         const source = card.dataset.provider || card.dataset.photoProvider;
         const bounds = card.getBoundingClientRect();
@@ -1612,10 +1613,10 @@ app.whenReady().then(async () => {
         assert.deepEqual(report.dataFolder, { pathVisible: true, selectable: true, opened: true, failures: true, retry: true, settingsUnchanged: true });
         assert.equal(report.interactions.categories, 8);
         assert.equal(report.interactions.apiSections, 5);
-        assert.equal(report.interactions.sourceGuides, 20);
+        assert.equal(report.interactions.sourceGuides, 19);
         assert.equal(report.interactions.manualFocusChecks, 6);
         assert.deepEqual(report.apply, { initialClean: true, uiOnlyClean: true, revertedClean: true, duplicateBlocked: true, pendingEditsRetained: true, languageRetained: true, retry: true, fileAssociationGuards: true, partialBaseline: true });
-        assert.deepEqual(report.providers, { sources: 19, persisted: true, cancelled: true, retainedValues: true, fallback: true, allDisabled: true, keyboardActivations: 2 });
+        assert.deepEqual(report.providers, { sources: 18, persisted: true, cancelled: true, retainedValues: true, fallback: true, allDisabled: true, keyboardActivations: 2 });
         assert.deepEqual(report.libraryPreview, { mutations: 13, dragAndDrop: 7, draftIsolation: true, saved: true, cancelled: true, empty: true });
         assert.deepEqual(report.editorTransitions, {
             preparesClosedFrame: true, slidesOpen: true, slidesClosed: true, retainsNodeOnSelection: true, rapidReopen: true, cancelsPendingEntry: true,

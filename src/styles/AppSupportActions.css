@@ -62,8 +62,8 @@
 }
 
 .app-support-android {
-    color: #69717b;
-    cursor: default;
+    --support-accent: #3ddc84;
+    --support-hover-background: rgba(61, 220, 132, 0.12);
 }
 
 .app-support-mug {

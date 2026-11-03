@@ -32,20 +32,6 @@ export const METADATA_PROVIDER_GUIDES = {
         url: 'https://developers.yes24.com/docs/apikey',
         registrationUrl: 'https://developers.yes24.com/apply',
     },
-    '알라딘': {
-        text: {
-            ko: '신규 TTBKey 발급은 종료되었습니다. 기존 키는 아래 링크에서 확인한 뒤 입력하고 적용하세요. 알라딘 OpenAPI 서비스는 2026년 10월 30일 종료 예정입니다.',
-            en: 'New TTBKey issuance has ended. Use the link below to check an existing key, enter it, and apply. Aladin OpenAPI is scheduled to close on October 30, 2026.',
-            ja: 'TTBKeyの新規発行は終了しました。下のリンクで既存のキーを確認し、入力して適用してください。Aladin OpenAPIは2026年10月30日に終了予定です。',
-        },
-        url: 'https://blog.aladin.co.kr/openapi/6695306',
-        registrationUrl: 'https://www.aladin.co.kr/ttb/wblog_manage.aspx',
-        registrationLabel: {
-            ko: '기존 TTBKey 확인',
-            en: 'View existing TTBKey',
-            ja: '既存のTTBKeyを確認',
-        },
-    },
     'Google Books': {
         text: {
             ko: 'Google Cloud Console에서 프로젝트를 선택하고 Books API를 사용 설정하세요. 사용자 인증 정보에서 API 키를 만든 뒤 API Key 입력란에 붙여 넣고 적용합니다. 이 검색에는 OAuth 클라이언트 ID 대신 API 키를 사용합니다.',

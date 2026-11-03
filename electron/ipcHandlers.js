@@ -1357,7 +1357,8 @@ function normalizeApiSource(apiName = '') {
   if (name.includes('anilist')) return 'Anilist';
   if (name.includes('amazon') || name.includes('아마존')) return 'Amazon';
     if (name.includes('yes24') || name.includes('예스24')) return 'YES24';
-  if (name.includes('알라딘') || name.includes('aladin')) return '알라딘';
+    // 종료된 API의 이전 소스 값도 인식하여 검색 요청을 거부합니다.
+    if (name.includes('알라딘') || name.includes('aladin')) return '알라딘';
     if (name.includes('문피아') || name.includes('munpia')) return '문피아';
     if (name.includes('한국웹툰') || name.includes('kmas')) return '한국웹툰';
   if (name.includes('vine')) return 'Vine';
@@ -1385,8 +1386,8 @@ function isMetadataApiAllowedForBookType(apiName = '', bookType = 'comic') {
     if (['Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB'].includes(apiName)) return true;
     if (['Audible', 'AudNexus', 'Libro.fm'].includes(apiName)) return bookType === 'audio';
   const allowed = bookType === 'book' || bookType === 'pdf' || bookType === 'audio'
-    ? new Set(['리디북스', '문피아', 'YES24', '알라딘', 'Google Books', 'Amazon'])
-    : new Set(['리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine']);
+    ? new Set(['리디북스', '문피아', 'YES24', 'Google Books', 'Amazon'])
+    : new Set(['리디북스', '문피아', '한국웹툰', 'YES24', 'Google Books', 'Anilist', 'Vine']);
   return allowed.has(apiName);
 }
 
@@ -1617,92 +1618,6 @@ async function searchAnilist(query, page = 1) {
       Characters: '',
     };
     return normalizeSearchResult(raw, item.id);
-  });
-}
-
-function parseAladinCreators(authorRaw = '') {
-  const writers = [];
-  const pencillers = [];
-  for (const rawPart of String(authorRaw).split(',')) {
-    const part = rawPart.trim();
-    if (!part) continue;
-    const name = (part.match(/^([^(]+)/)?.[1] || part).trim();
-    if (part.includes('(옮긴이)') || part.includes('(번역)')) continue;
-    if (part.includes('(그림)') || part.includes('(일러스트)') || part.includes('(작화)')) {
-      pencillers.push(name);
-    } else if (part.includes('(지은이)') || part.includes('(글)') || part.includes('(원작)') || part.includes('(저자)') || !part.includes('(')) {
-      writers.push(name);
-    }
-  }
-  return { writer: writers.join(', '), penciller: pencillers.join(', ') };
-}
-
-async function searchAladin(query, ttbKey = '', page = 1, bookType = 'comic') {
-  if (!ttbKey) return [];
-  const params = new URLSearchParams({
-    ttbkey: ttbKey,
-    Query: query,
-    QueryType: 'Keyword',
-    MaxResults: '20',
-    start: String(page || 1),
-    SearchTarget: 'Book',
-    output: 'js',
-    Version: '20131101',
-    Cover: 'Big',
-    OptResult: 'categoryId,Story',
-  });
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'application/json,text/javascript,*/*;q=0.8',
-    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
-    'Referer': 'https://www.aladin.co.kr/',
-  };
-  let body;
-  try {
-    body = await requestTextGeneric(`http://www.aladin.co.kr/ttb/api/ItemSearch.aspx?${params.toString()}`, headers, 12000);
-  } catch (error) {
-    body = await requestTextGeneric(`https://www.aladin.co.kr/ttb/api/ItemSearch.aspx?${params.toString()}`, headers, 12000);
-  }
-  const cleanBody = body.replace(/^\uFEFF/, '').trim();
-  let data;
-  try {
-    data = JSON.parse(cleanBody);
-  } catch (error) {
-    throw new Error(i18nT('api_aladin_parse_failed', { msg: cleanBody.slice(0, 120) }));
-  }
-  return (data.item || []).map(item => {
-    const { writer, penciller } = parseAladinCreators(item.author || '');
-    const date = parseDateParts(item.pubDate || '');
-    const genre = String(item.categoryName || '').split('>').pop() || '';
-    const rating = item.customerReviewRank ? String(item.customerReviewRank) : '';
-    const isbn = normalizeIsbn(item.isbn13 || item.isbn || '');
-    const raw = {
-      Title: item.title || '',
-      Series: item.title || '',
-      Writer: writer,
-      Penciller: penciller,
-      Publisher: item.publisher || '',
-      ISBN: isbn,
-      Summary: stripHtml(item.description || ''),
-      Genre: genre,
-      Tags: genre,
-      Web: item.link || '',
-      CoverUrl: item.cover || '',
-      LocalizedSeries: item.title || '',
-      Count: '',
-      Rating: rating ? `${rating} / 10.0` : '-',
-      RatingScore: rating || '-',
-      CommunityRating: rating,
-      AgeRating: '',
-      PubDate: item.pubDate || '',
-      Format: metadataFormatForBookType(bookType),
-      Manga: mangaValueForBookType(bookType),
-      ...date,
-      Volume: '',
-      Number: '',
-      Characters: '',
-    };
-    return normalizeSearchResult(raw, item.itemId || item.isbn13 || item.isbn || item.link);
   });
 }
 
@@ -4052,8 +3967,6 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
             Format: metadataFormatForBookType(bookType),
             Manga: mangaValueForBookType(bookType),
         }, item.ID));
-      } else if (apiName === '알라딘') {
-        results = await searchAladin(query, apiKeys.aladin || '', page, bookType);
       } else if (apiName === 'YES24') {
         const items = await searchYes24(query, apiKeys.yes24 || '', page, requestJsonGeneric);
         results = items.map(item => normalizeSearchResult({

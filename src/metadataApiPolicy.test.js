@@ -26,6 +26,18 @@ test('모든 검색 소스는 활성화 설정의 등록 목록과 일치한다'
     assert.deepEqual(ALL_METADATA_API_SOURCES.map(source => source.value).sort(), [...METADATA_API_SOURCE_NAMES].sort());
 });
 
+test('종료된 알라딘 API는 기존 키와 활성 설정이 있어도 제외하고 기본 소스를 복구한다', () => {
+    const legacy = { api_keys: { aladin: 'saved-key' }, metadata_api_enabled: { '알라딘': true }, last_meta_api: '알라딘' };
+    assert.equal(Object.hasOwn(normalizeMetadataApiEnabled(legacy.metadata_api_enabled), '알라딘'), false);
+    for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
+        assert.equal(metadataSearchSourcesForBookType(bookType, legacy.metadata_api_enabled).some(source => source.value === '알라딘'), false);
+        assert.equal(enabledMetadataApiSourcesForBookType(bookType, legacy.api_keys, legacy.metadata_api_enabled).some(source => source.value === '알라딘'), false);
+        assert.equal(preferredMetadataApiSource(legacy, bookType), '리디북스');
+        assert.equal(preferredMetadataApiSource({ ...legacy, [metadataApiPreferenceKey(bookType)]: '알라딘' }, bookType), '리디북스');
+        assert.equal(preferredMetadataApiSource({ ...legacy, metadata_api_enabled: { '알라딘': true, '리디북스': false } }, bookType), '문피아');
+    }
+});
+
 test('검색 목록은 토글을 반영하고 통합검색은 활성화와 필수 키를 모두 확인한다', () => {
     const settings = { '리디북스': false, YES24: false, Audible: false };
     for (const bookType of ['comic', 'book', 'pdf', 'audio']) {
@@ -34,11 +46,11 @@ test('검색 목록은 토글을 반영하고 통합검색은 활성화와 필�
         assert.ok(!shown.includes('리디북스'));
         assert.ok(!shown.includes('YES24'));
         assert.ok(!shown.includes('Audible'));
-        assert.ok(shown.includes('알라딘'));
+        assert.ok(!shown.includes('알라딘'));
         const available = enabledMetadataApiSourcesForBookType(bookType, { yes24: 'key', aladin: 'key' }, settings).map(source => source.value);
         assert.ok(!available.includes('YES24'));
         assert.ok(!available.includes('Hardcover'));
-        assert.ok(available.includes('알라딘'));
+        assert.ok(!available.includes('알라딘'));
     }
 });
 
@@ -67,7 +79,6 @@ test('API source별 필수 키 요구 여부를 판정한다', () => {
     assert.equal(apiSourceHasRequiredKey('YES24', {}), false);
     assert.equal(apiSourceHasRequiredKey('YES24', { yes24: '  ' }), false);
     assert.equal(apiSourceHasRequiredKey('YES24', { yes24: 'yk_live_test' }), true);
-  assert.equal(requiredApiKeyForSource('알라딘'), 'aladin');
   assert.equal(requiredApiKeyForSource('Google Books'), 'google');
   assert.equal(requiredApiKeyForSource('Vine'), 'vine');
   assert.equal(requiredApiKeyForSource('Amazon'), '');
@@ -88,7 +99,6 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
     '문피아',
     '한국웹툰',
     'YES24',
-    '알라딘',
     'Google Books',
     'Anilist',
     'Vine',
@@ -98,7 +108,6 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
     '리디북스',
     '문피아',
     'YES24',
-    '알라딘',
     'Google Books',
     'Amazon',
     ...additionalBookSources,
@@ -107,7 +116,6 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
     '리디북스',
     '문피아',
     'YES24',
-    '알라딘',
     'Google Books',
     'Amazon',
     ...additionalBookSources,
@@ -116,7 +124,6 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
     '리디북스',
     '문피아',
     'YES24',
-    '알라딘',
     'Google Books',
     'Amazon',
     ...additionalBookSources,
@@ -125,7 +132,7 @@ test('메타데이터 검색 API 목록은 만화책과 EPUB/PDF/오디오북 �
   assert.equal(normalizeMetadataApiSourceForBookType('Vine', 'book', {}), '리디북스');
   assert.equal(normalizeMetadataApiSourceForBookType('Vine', 'pdf', {}), '리디북스');
   assert.equal(normalizeMetadataApiSourceForBookType('Vine', 'audio', {}), '리디북스');
-  assert.equal(normalizeMetadataApiSourceForBookType('알라딘', 'book', { aladin: 'key' }), '알라딘');
+  assert.equal(normalizeMetadataApiSourceForBookType('알라딘', 'book', { aladin: 'key' }), '리디북스');
   assert.equal(normalizeMetadataApiSourceForBookType('Amazon', 'comic', {}), '리디북스');
 });
 

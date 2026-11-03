@@ -21,6 +21,25 @@ function writeDataConfig(root, config) {
     return configPath;
 }
 
+test('알라딘 기본 검색 소스는 설정을 다시 불러올 때 사용 가능한 소스로 대체한다', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-retired-provider-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const preferenceKeys = ['comic', 'book', 'pdf', 'audio'].map(type => `preferred_meta_api_${type}`);
+    writeDataConfig(root, {
+        ...Object.fromEntries(preferenceKeys.map(key => [key, '알라딘'])),
+        last_meta_api: '알라딘',
+        api_keys: { aladin: 'saved-key' },
+        metadata_api_enabled: { '알라딘': true, '리디북스': false },
+    });
+    const manager = new ConfigManager(root, root, { platform: 'linux' });
+    const loaded = manager.loadConfig();
+    for (const key of preferenceKeys) assert.equal(loaded[key], '문피아');
+    assert.equal(Object.hasOwn(loaded.metadata_api_enabled, '알라딘'), false);
+    assert.equal(manager.saveConfig(loaded), true);
+    const restarted = new ConfigManager(root, root, { platform: 'linux' }).loadConfig();
+    for (const key of preferenceKeys) assert.equal(restarted[key], '문피아');
+});
+
 test('모션 설정은 이전 설정에 기본값을 부여하고 저장 후 다시 읽는다', t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-config-motion-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));

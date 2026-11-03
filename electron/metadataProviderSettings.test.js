@@ -32,7 +32,7 @@ test('Hardcover 토큰의 선택적인 Bearer 접두사만 제거한다', () => 
 
 test('검색 소스 토글은 누락된 기존 설정을 활성화하고 명시적으로 꺼진 등록 소스만 비활성화한다', () => {
     const defaults = normalizeMetadataApiEnabled();
-    assert.equal(Object.keys(defaults).length, 19);
+    assert.equal(Object.keys(defaults).length, 18);
     assert.ok(Object.values(defaults).every(value => value === true));
     for (const value of [null, [], 'invalid', true]) {
         assert.deepEqual(normalizeMetadataApiEnabled(value), defaults);

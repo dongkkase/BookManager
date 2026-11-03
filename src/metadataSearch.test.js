@@ -35,7 +35,7 @@ test('통합검색은 키가 등록되어도 비활성 소스를 요청하지 �
         return { success: true, results: [{ id: 1, title: request.apiSource }] };
     });
     assert.equal(result.success, true);
-    assert.ok(calls.includes('알라딘'));
+    assert.ok(!calls.includes('알라딘'));
     assert.ok(calls.includes('Open Library'));
     assert.ok(calls.every(source => metadataApiEnabled[source] !== false));
     assert.deepEqual(result.results.map(item => item.apiSource).sort(), [...calls].sort());
@@ -78,7 +78,7 @@ test('registered keys enable their providers and comic search includes Anilist i
         calls.push(request.apiSource);
         return { success: true, results: [] };
     });
-    assert.deepEqual(calls, ['리디북스', '문피아', '한국웹툰', 'YES24', '알라딘', 'Google Books', 'Anilist', 'Vine', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
+    assert.deepEqual(calls, ['리디북스', '문피아', '한국웹툰', 'YES24', 'Google Books', 'Anilist', 'Vine', 'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB']);
 });
 
 test('search requests run at most three at a time and collect responses in provider order', async () => {

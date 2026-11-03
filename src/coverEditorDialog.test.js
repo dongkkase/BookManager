@@ -1600,8 +1600,21 @@ test('unsupported file types temporarily use unified search without losing the s
     } finally { value.close(); }
 });
 
+test('a retired Aladin cover preference falls back to unified search without requesting Aladin', async () => {
+    const value = await fixture({ preferences: { apiSource: '알라딘' }, apiKeys: { aladin: 'saved-key' } });
+    try {
+        value.button('cover_editor_source_metadata').props.onClick();
+        value.render();
+        assert.equal(searchApiSelect(value).props.value, '통합검색');
+        searchForm(value).props.onSubmit(event());
+        await value.settle();
+        assert.ok(value.calls.metadata.length > 0);
+        assert.ok(value.calls.metadata.every(request => request.apiSource !== '알라딘'));
+    } finally { value.close(); }
+});
+
 test('a selected cover API without its required key shows the settings hint without fetching', async () => {
-    const value = await fixture({ preferences: { apiSource: '알라딘' } });
+    const value = await fixture({ preferences: { apiSource: 'YES24' } });
     try {
         value.button('cover_editor_source_metadata').props.onClick();
         value.render();
@@ -1609,7 +1622,7 @@ test('a selected cover API without its required key shows the settings hint with
         await value.settle();
         assert.deepEqual(value.calls.metadata, []);
         assert.deepEqual(value.calls.toasts, [{ key: 'api_key_missing' }]);
-        assert.equal(searchApiSelect(value).props.value, '알라딘');
+        assert.equal(searchApiSelect(value).props.value, 'YES24');
         assert.equal(value.button('cover_editor_metadata_next').props.disabled, true);
         assert.equal(value.all(node => node.props['aria-label'] === 'cover_editor_metadata_loading').length, 0);
     } finally { value.close(); }
@@ -1617,7 +1630,7 @@ test('a selected cover API without its required key shows the settings hint with
 
 test('unified cover search passes file type and API keys, then applies only the selected cover image', async () => {
     const chosen = deferred();
-    const apiKeys = { aladin: 'configured-key' };
+    const apiKeys = { yes24: 'configured-key', aladin: 'legacy-key' };
     const value = await fixture({ apiKeys, metadataPreview: () => chosen.promise });
     try {
         value.button('cover_editor_source_metadata').props.onClick();
@@ -1632,7 +1645,8 @@ test('unified cover search passes file type and API keys, then applies only the 
         assert.equal(submit.defaultPrevented, true);
         assert.ok(value.calls.metadata.length > 1);
         assert.ok(value.calls.metadata.every(request => request.query === 'Book volume 2 cover' && request.page === 1 && request.bookType === 'comic' && request.apiKeys === apiKeys));
-        assert.ok(value.calls.metadata.some(request => request.apiSource === '알라딘'));
+        assert.ok(value.calls.metadata.some(request => request.apiSource === 'YES24'));
+        assert.ok(value.calls.metadata.every(request => request.apiSource !== '알라딘'));
         assert.deepEqual(value.calls.metadataPreview, []);
         assert.equal(value.button('cover_editor_save').props.disabled, true);
         const choice = value.all(node => node.type === 'button' && node.props.title === metadataResult.title)[0];

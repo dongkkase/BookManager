@@ -2571,15 +2571,6 @@ body.is-resizing-panel * {
     white-space: nowrap;
 }
 
-.settings-aladin-api-row {
-    row-gap: 6px;
-}
-
-.settings-aladin-api-notice {
-    grid-column: 2;
-    min-width: 0;
-}
-
 .settings-separator {
   height: 1px;
   background-color: #aaa;
@@ -3342,10 +3333,6 @@ body.is-resizing-panel * {
 
     .settings-fieldset {
         padding: 16px 12px;
-    }
-
-    .settings-aladin-api-notice {
-        grid-column: 1;
     }
 
     .settings-provider-header.has-key {

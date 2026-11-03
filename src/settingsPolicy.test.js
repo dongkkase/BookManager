@@ -12,6 +12,18 @@ import {
     uniquePaths,
 } from './settingsPolicy.js';
 
+test('기존 알라딘 기본 검색 설정과 활성 설정은 사용 가능한 소스로 복구한다', () => {
+    const preferenceKeys = ['comic', 'book', 'pdf', 'audio'].map(type => `preferred_meta_api_${type}`);
+    const normalized = normalizeSettingsConfig({
+        ...Object.fromEntries(preferenceKeys.map(key => [key, '알라딘'])),
+        last_meta_api: '알라딘',
+        api_keys: { aladin: 'saved-key' },
+        metadata_api_enabled: { '알라딘': true, '리디북스': false },
+    });
+    for (const key of preferenceKeys) assert.equal(normalized[key], '문피아');
+    assert.equal(Object.hasOwn(normalized.metadata_api_enabled, '알라딘'), false);
+});
+
 test('애니메이션 설정은 기본값을 보완하고 저장할 세 선택을 유지한다', () => {
     const defaults = normalizeSettingsConfig();
     assert.equal(defaults.motion_preference, 'full');
