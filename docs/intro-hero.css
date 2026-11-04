@@ -1,0 +1,216 @@
+.hero {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    align-content: center;
+    min-height: clamp(36rem, 68vh, 48rem);
+    padding: clamp(104px, 12vh, 142px) max(clamp(20px, 5vw, 76px), calc((100% - 1320px) / 2)) clamp(48px, 6vw, 80px);
+    overflow: hidden;
+    border-bottom: 1px solid var(--line);
+    background-color: #101214;
+}
+
+.hero::before,
+.hero::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+}
+
+.hero::before {
+    z-index: -2;
+    inset: -3%;
+    background: url("bg.webp") 65% 47% / cover no-repeat;
+}
+
+.hero::after {
+    z-index: -1;
+    inset: 0;
+    background:
+        linear-gradient(90deg, rgb(9 13 17 / 96%) 0%, rgb(9 13 17 / 91%) 28%, rgb(9 13 17 / 72%) 48%, rgb(9 13 17 / 16%) 83%),
+        linear-gradient(0deg, #101214 0%, rgb(16 18 20 / 40%) 22%, rgb(16 18 20 / 10%) 70%, rgb(16 18 20 / 40%) 100%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    :root:not([data-motion="reduced"]) .hero::before {
+        animation: intro-shelf-pan 32s ease-in-out infinite alternate;
+    }
+}
+
+@keyframes intro-shelf-pan {
+    from { transform: translate(-1.8%, -0.6%); }
+    to { transform: translate(1.8%, 0.6%); }
+}
+
+.hero-inner {
+    max-width: 850px;
+}
+
+.hero-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    grid-template-areas: "intro artwork" "extras artwork";
+    align-items: center;
+    column-gap: clamp(32px, 5vw, 80px);
+}
+
+.hero-layout .hero-inner {
+    grid-area: intro;
+    align-self: end;
+}
+
+.hero-extra {
+    grid-area: extras;
+    align-self: start;
+}
+
+.hero-artwork {
+    grid-area: artwork;
+    justify-self: end;
+    display: block;
+    width: 100%;
+    max-width: 620px;
+    height: auto;
+    border: 1px solid rgb(222 237 249 / 25%);
+    border-radius: 12px;
+    box-shadow: 0 20px 55px rgb(0 0 0 / 40%);
+}
+
+.hero .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 16px;
+    color: #80d9aa;
+    font-size: 0.94rem;
+    font-weight: 700;
+    line-height: 1.45;
+}
+
+.hero .eyebrow::before {
+    content: "";
+    flex: 0 0 26px;
+    height: 2px;
+    background: currentColor;
+}
+
+.hero h1 {
+    margin: 0;
+    padding: 0;
+    color: #f5f8fa;
+    font-size: clamp(2.45rem, 7.1vw, 5.5rem);
+    font-weight: 750;
+    line-height: 1.12;
+    letter-spacing: -0.045em;
+}
+
+.hero h1 small {
+    color: #d8e5ea;
+    font-size: 0.4em;
+    font-weight: 600;
+    letter-spacing: -0.035em;
+}
+
+.hero-message {
+    margin: 20px 0 0;
+    color: var(--text);
+    font-size: clamp(1.65rem, 3.1vw, 2.7rem);
+    font-weight: 700;
+    line-height: 1.27;
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+}
+
+.hero .lead {
+    max-width: 43rem;
+    margin: 18px 0 0;
+    color: #d1d9df;
+    font-size: clamp(1rem, 1.3vw, 1.18rem);
+    line-height: 1.7;
+    text-wrap: pretty;
+}
+
+.hero .actions {
+    gap: 10px;
+    margin-top: 28px;
+}
+
+.hero .button {
+    min-height: 44px;
+    border-color: #53616b;
+    background-color: #20282e;
+    line-height: 1.3;
+}
+
+.hero .button.primary {
+    border-color: #408cc1;
+    background-color: #176695;
+    color: #fff;
+}
+
+.hero .button:is(:hover, :focus-visible) {
+    border-color: #7ac8ff;
+    background-color: #285572;
+}
+
+.support-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.support-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 2px 11px;
+    border: 1px solid rgb(225 237 245 / 24%);
+    border-radius: 999px;
+    background: rgb(15 20 24 / 82%);
+    color: #cfdae0;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+@media (max-width: 820px) {
+    .hero-layout {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: "intro" "artwork" "extras";
+    }
+
+    .hero-artwork {
+        justify-self: start;
+        width: min(100%, 560px);
+        margin-top: 24px;
+    }
+}
+
+@media (max-width: 760px) {
+    .hero {
+        min-height: 0;
+        padding-top: 106px;
+        padding-bottom: 44px;
+    }
+
+    .hero::after {
+        background: linear-gradient(110deg, rgb(9 13 17 / 93%), rgb(9 13 17 / 66%)),
+            linear-gradient(0deg, #101214 0%, transparent 68%);
+    }
+
+    .hero .eyebrow {
+        margin-bottom: 10px;
+    }
+
+    .hero-message {
+        margin-top: 14px;
+    }
+
+    .hero .lead {
+        margin-top: 12px;
+    }
+
+    .hero .actions {
+        margin-top: 22px;
+    }
+}

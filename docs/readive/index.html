@@ -125,39 +125,6 @@
             color: #ffffff;
         }
 
-        .hero {
-            padding: 104px clamp(20px, 6vw, 72px) 64px;
-            border-bottom: 1px solid var(--line);
-            background: linear-gradient(120deg, #101820, #101214 65%);
-        }
-
-        .hero-layout {
-            max-width: 1240px;
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) minmax(0, 1.06fr);
-            grid-template-areas: "intro artwork" "extras artwork";
-            align-items: center;
-            column-gap: clamp(28px, 4vw, 64px);
-        }
-
-        .hero-inner {
-            grid-area: intro;
-        }
-
-        .hero-extra {
-            grid-area: extras;
-        }
-
-        .hero-artwork {
-            grid-area: artwork;
-            display: block;
-            width: 100%;
-            height: auto;
-            border: 1px solid var(--line);
-            border-radius: 12px;
-        }
-
         .hero-preview {
             padding: clamp(10px, 2vw, 24px);
             border: 1px solid var(--line);
@@ -254,36 +221,6 @@
             background: var(--accent);
         }
 
-        .eyebrow {
-            margin: 0 0 14px;
-            color: var(--green);
-            font-size: 0.95rem;
-            font-weight: 700;
-        }
-
-        h1 {
-            margin: 0;
-            font-size: clamp(2.6rem, 6.4vw, 4.5rem);
-            line-height: 1.15;
-            letter-spacing: -0.02em;
-        }
-
-        h1>small{font-size:0.5em;color:#f6e3bd}
-
-        .lead {
-            max-width: 760px;
-            margin: 24px 0 0;
-            color: var(--muted);
-            font-size: clamp(1.05rem, 2vw, 1.28rem);
-        }
-
-        .hero-message {
-            margin: 20px 0 0;
-            font-size: clamp(1.65rem, 3.5vw, 2.8rem);
-            font-weight: 700;
-            line-height: 1.4;
-        }
-
         .actions {
             display: flex;
             flex-wrap: wrap;
@@ -326,27 +263,6 @@
         .button.pending {
             color: var(--muted);
             background: rgba(26, 29, 32, 0.72);
-        }
-
-        .support-badges {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 18px;
-        }
-
-        .support-badge {
-            display: inline-flex;
-            align-items: center;
-            min-height: 32px;
-            padding: 0 11px;
-            border: 1px solid rgba(238, 243, 247, 0.18);
-            border-radius: 999px;
-            color: var(--muted);
-            background: rgba(16, 18, 20, 0.58);
-            backdrop-filter: blur(8px);
-            font-size: 0.88rem;
-            font-weight: 700;
         }
 
         main {
@@ -558,20 +474,6 @@
                 padding: 6px 10px;
             }
 
-            .hero {
-                padding-bottom: 40px;
-            }
-
-            .hero-layout {
-                grid-template-columns: minmax(0, 1fr);
-                grid-template-areas: "intro" "artwork" "extras";
-            }
-
-            .hero-artwork {
-                max-width: 560px;
-                margin: 22px auto 0;
-            }
-
             .hero-media-controls {
                 gap: 4px;
             }
@@ -597,6 +499,10 @@
             }
         }
     </style>
+    <link rel="stylesheet" href="../intro-hero.css">
+    <link rel="stylesheet" href="../intro-motion.css">
+    <script defer src="../vendor/motion-mini.js"></script>
+    <script defer src="../intro-motion.js"></script>
 </head>
 <body>
     <nav class="site-top-nav" aria-label="프로젝트 소개 페이지">
@@ -988,7 +894,9 @@
         const heroPreview = document.querySelector('.hero-preview');
         let heroSlideIndex = 0;
         let heroSlideTimer = null;
-        let heroAutoPlayPaused = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const heroMotionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+        let heroAutoPlayPaused = heroMotionPreference.matches;
+        let heroPausedByUser = false;
 
         function setHeroSlide(nextIndex) {
             if (heroSlides.length === 0) {
@@ -1046,6 +954,7 @@
 
         heroPauseButton?.addEventListener('click', () => {
             heroAutoPlayPaused = !heroAutoPlayPaused;
+            heroPausedByUser = heroAutoPlayPaused;
             updateHeroPauseButton();
             startHeroSlideAutoPlay();
         });
@@ -1080,6 +989,12 @@
             updateHeroPauseButton();
             setHeroSlide(0);
             startHeroSlideAutoPlay();
+
+            heroMotionPreference.addEventListener('change', () => {
+                heroAutoPlayPaused = heroPausedByUser || heroMotionPreference.matches;
+                updateHeroPauseButton();
+                startHeroSlideAutoPlay();
+            });
 
             document.addEventListener('visibilitychange', () => {
                 if (document.hidden) {

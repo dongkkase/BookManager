@@ -87,75 +87,6 @@
             color: inherit;
         }
 
-        /* 배경 이동 애니메이션 */
-        @keyframes moveHeroBg {
-            0% {
-                transform: translate(0, 0);
-            }
-            100% {
-                transform: translate(-8%, -8%);
-            }
-        }
-
-        /* 블러 효과 애니메이션 */
-        @keyframes blurHeroBg {
-            0% {
-                filter: blur(0px);
-            }
-            100% {
-                filter: blur(4px);
-            }
-        }
-
-        .hero {
-            min-height: 60vh;
-            display: grid;
-            align-items: end;
-            padding: 96px clamp(20px, 6vw, 72px) 72px;
-            position: relative;
-            overflow: hidden;
-            border-bottom: 1px solid var(--line);
-            z-index: 1; /* 콘텐츠를 가상 요소 위에 유지 */
-            background-color: var(--bg); /* 기본 배경색 */
-        }
-
-        /* 배경 이미지 및 오버레이를 위한 가상 요소 추가 */
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: -10%;
-            left: -10%;
-            width: 120%;
-            height: 120%;
-            background:
-                linear-gradient(90deg, rgba(10, 12, 13, 0.96) 0%, rgba(10, 12, 13, 0.84) 38%, rgba(10, 12, 13, 0.46) 68%, rgba(10, 12, 13, 0.68) 100%),
-                linear-gradient(180deg, rgba(10, 12, 13, 0.16) 0%, rgba(10, 12, 13, 0.66) 72%, rgba(10, 12, 13, 0.96) 100%),
-                url("../bg.webp"),
-                #101214;
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            z-index: -1;
-
-            /* 이동 속도는 60초, 블러 속도는 10초로 별개 지정 */
-            animation:
-                moveHeroBg 60s ease-in-out infinite alternate,
-                blurHeroBg 4s ease-in-out infinite alternate;
-        }
-
-        .hero-inner {
-            max-width: 850px;
-            position: relative;
-            text-shadow: 0 2px 18px rgba(0, 0, 0, 0.34);
-        }
-
-        .eyebrow {
-            margin: 0 0 14px;
-            color: var(--green);
-            font-size: 0.95rem;
-            font-weight: 700;
-        }
-
         .site-top-nav {
             position: fixed;
             top: 14px;
@@ -193,76 +124,11 @@
             color: #ffffff;
         }
 
-        h1 {
-            margin: 0;
-            font-size: 5.5rem;
-            line-height: 1.18;
-            letter-spacing: 0;
-        }
-
-        .animated-title {
-            display: inline-block;
-            position: relative;
-            max-width: 100%;
-            line-height: 1.18;
-            padding-bottom: 0.18em;
-            overflow: visible;
-            color: #eef3f7;
-        }
-
-        .js .text-animate {
-            opacity: 0;
-        }
-
-        .animated-title .char {
-            line-height: 1.18;
-            color: transparent;
-            background: linear-gradient(180deg, #ffffff 0%, #e5edf2 58%, #b9c8d0 100%);
-            -webkit-background-clip: text;
-            background-clip: text;
-            will-change: transform;
-        }
-
-        .lead {
-            max-width: 760px;
-            margin: 24px 0 0;
-            color: var(--muted);
-            font-size: clamp(1.05rem, 2vw, 1.28rem);
-        }
-
-        .hero-message {
-            margin: 18px 0 0;
-            font-size: clamp(1.65rem, 3.5vw, 2.8rem);
-            font-weight: 700;
-            line-height: 1.4;
-        }
-
         .actions {
             display: flex;
             flex-wrap: wrap;
             gap: 12px;
             margin-top: 30px;
-        }
-
-        .support-badges {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 18px;
-        }
-
-        .support-badge {
-            display: inline-flex;
-            align-items: center;
-            min-height: 32px;
-            padding: 0 11px;
-            border: 1px solid rgba(238, 243, 247, 0.18);
-            border-radius: 999px;
-            color: var(--muted);
-            background: rgba(16, 18, 20, 0.58);
-            backdrop-filter: blur(8px);
-            font-size: 0.9rem;
-            font-weight: 700;
         }
 
         .button {
@@ -623,37 +489,6 @@
                 padding: 6px 10px;
             }
 
-            .hero {
-                min-height: 76vh;
-                padding-top: 96px;
-                /* 기존 배경 제거 */
-                background-image: none;
-                background-color: var(--bg);
-            }
-
-            /* 가상 요소를 모바일에 맞게 수정 */
-            .hero::before {
-                /* 모바일 그라데이션 및 이미지 복제 */
-                background:
-                    linear-gradient(180deg, rgba(10, 12, 13, 0.68) 0%, rgba(10, 12, 13, 0.94) 56%, rgba(10, 12, 13, 0.98) 100%),
-                    linear-gradient(90deg, rgba(10, 12, 13, 0.66), rgba(10, 12, 13, 0.34)),
-                    url("../bg.webp");
-                background-size: cover;
-                background-position: center top;
-                background-repeat: no-repeat;
-
-                /* 미묘한 움직임을 위해 크기와 위치를 더 늘림 */
-                width: 130%;
-                height: 130%;
-                top: -15%;
-                left: -15%;
-
-                /* 애니메이션은 동일하게 유지 (가상 요소의 새로운 크기와 위치로 작동) */
-                animation:
-                    moveHeroBg 60s ease-in-out infinite alternate,
-                    blurHeroBg 4s ease-in-out infinite alternate;
-            }
-
             .button {
                 width: 100%;
             }
@@ -705,28 +540,18 @@
                 height: 36px;
                 font-size: 1.45rem;
             }
-
-            h1 {
-                font-size: 3.4rem;
-            }
-        }
-
-        @media (max-width: 420px) {
-            h1 {
-                font-size: 2.65rem;
-            }
         }
 
         @media (prefers-reduced-motion: reduce) {
-            .hero::before {
-                animation: none;
-            }
-
-            .animated-title {
-                opacity: 1;
+            .demo-slide {
+                transition: none;
             }
         }
     </style>
+    <link rel="stylesheet" href="../intro-hero.css">
+    <link rel="stylesheet" href="../intro-motion.css">
+    <script defer src="../vendor/motion-mini.js"></script>
+    <script defer src="../intro-motion.js"></script>
 </head>
 <body>
     <nav class="site-top-nav" aria-label="Product navigation">
@@ -740,7 +565,7 @@
     <header class="hero">
         <div class="hero-inner">
             <p class="eyebrow">Your personal library for comics, ebooks, documents and audiobooks</p>
-            <h1 class="animated-title text-animate" aria-label="BookManager">BookManager</h1>
+            <h1>BookManager</h1>
             <p class="hero-message">All your books together.<br>Ready to read and enjoy.</p>
             <p class="lead">Find books across your computer, external drives and NAS. Group a series into a collection even when its volumes are in different folders. Open a book in the built-in reader or send it to Readive on your phone.</p>
             <div class="actions">
@@ -808,7 +633,7 @@
         <section id="demo" class="demo-section" aria-labelledby="demo-title">
             <div class="demo-header">
                 <div>
-                    <h2 id="demo-title" class="text-animate">See your library take shape</h2>
+                    <h2 id="demo-title">See your library take shape</h2>
                     <p class="section-lead">Explore the app, from browsing and organizing files to editing book details, reading and sending books to mobile. Demos show the Korean interface.</p>
                 </div>
                 <span class="demo-count" data-demo-count>1 / 11</span>
@@ -816,7 +641,7 @@
             <div class="demo-slider" data-demo-slider aria-label="BookManager app demos">
                 <div class="demo-viewport">
                     <figure class="demo-slide demo-slide-video active" aria-hidden="false">
-                        <video src="../demo/demo0.mp4" aria-label="BookManager library browsing demo video" autoplay muted playsinline controls preload="auto"></video>
+                        <video src="../demo/demo0.mp4" aria-label="BookManager library browsing demo video" poster="../demo/demo0.png" muted playsinline controls preload="metadata"></video>
                         <figcaption class="demo-caption">
                             <span><strong>Browse your library by cover</strong>See covers and details for books in your folders, and find your next read.</span>
                             <em class="demo-badge">Library manager</em>
@@ -912,7 +737,7 @@
         </section>
 
         <section aria-labelledby="library-title">
-            <h2 id="library-title" class="text-animate">Remember a word, find the book</h2>
+            <h2 id="library-title">Remember a word, find the book</h2>
             <p class="section-lead">Add folders from your computer, external drives and NAS as libraries. Search filenames, book details and words in the text without switching between folders.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -931,7 +756,7 @@
         </section>
 
         <section aria-labelledby="organize-title">
-            <h2 id="organize-title" class="text-animate">Organize comic volumes and pages</h2>
+            <h2 id="organize-title">Organize comic volumes and pages</h2>
             <p class="section-lead">Split a comic archive into volumes or put pages with inconsistent names back in order. Drag in files or folders and review the output names and destinations before you begin.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -951,7 +776,7 @@
         </section>
 
         <section aria-labelledby="ebook-tools-title">
-            <h2 id="ebook-tools-title" class="text-animate">Edit TXT files and EPUBs</h2>
+            <h2 id="ebook-tools-title">Edit TXT files and EPUBs</h2>
             <p class="section-lead">Use the file tools to fix distracting line breaks, or turn your own writing into an ebook with a cover and table of contents.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -970,7 +795,7 @@
         </section>
 
         <section aria-labelledby="metadata-title">
-            <h2 id="metadata-title" class="text-animate">Give your files covers and stories</h2>
+            <h2 id="metadata-title">Give your files covers and stories</h2>
             <p class="section-lead">Look up comics in Korean Webtoons or audiobooks in Audible. Sources such as RIDI and Google Books also let you find covers, authors and summaries to add to your books.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -990,7 +815,7 @@
         </section>
 
         <section aria-labelledby="reader-title">
-            <h2 id="reader-title" class="text-animate">Open a book or press play</h2>
+            <h2 id="reader-title">Open a book or press play</h2>
             <p class="section-lead">Enjoy comics, EPUB, PDF, TXT and audiobooks with built-in readers and players. Save bookmarks and your last reading position to pick up where you left off.</p>
             <div class="split">
                 <div class="list-panel">
@@ -1015,7 +840,7 @@
         </section>
 
         <section aria-labelledby="sharing-title">
-            <h2 id="sharing-title" class="text-animate">Take your desktop library to your devices</h2>
+            <h2 id="sharing-title">Take your desktop library to your devices</h2>
             <p class="section-lead">Organize on your computer and read on the device you prefer. Send files to Readive or open your shared library in a compatible app.</p>
             <div class="split">
                 <div class="list-panel">
@@ -1043,7 +868,7 @@
         </section>
 
         <section aria-labelledby="formats-title">
-            <h2 id="formats-title" class="text-animate">Keep the file formats you already use</h2>
+            <h2 id="formats-title">Keep the file formats you already use</h2>
             <p class="section-lead">Manage comics, documents and audiobooks in one library. Available tools and metadata storage depend on the file format.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -1062,7 +887,7 @@
         </section>
 
         <section aria-labelledby="faq-title">
-            <h2 id="faq-title" class="text-animate">Before you get started</h2>
+            <h2 id="faq-title">Before you get started</h2>
             <details class="faq-item">
                 <summary>Is BookManager free?</summary>
                 <p>BookManager is a free, open-source app released under the MIT license. It supports Windows and macOS, with Korean, English and Japanese interfaces. Search, AI and text-to-speech features that use external APIs may be subject to those services&#x27; terms and fees.</p>
@@ -1112,50 +937,6 @@
         </nav>
     </footer>
     <script>
-        function split(el) {
-            const nodes = Array.from(el.childNodes);
-            el.innerHTML = '';
-            const chars = [];
-
-            nodes.forEach(node => {
-                if (node.nodeType === Node.TEXT_NODE) {
-                    node.textContent.split('').forEach(ch => {
-                        const wrap = document.createElement('span');
-                        wrap.style.cssText = ch === ' '
-                            ? 'display:inline-block; overflow:hidden; vertical-align:bottom; white-space:pre; line-height:1.18; padding-bottom:0.16em; margin-bottom:-0.16em'
-                            : 'display:inline-block; overflow:hidden; vertical-align:bottom; line-height:1.18; padding-bottom:0.16em; margin-bottom:-0.16em';
-
-                        const s = document.createElement('span');
-                        s.className = 'char';
-                        s.textContent = ch;
-                        wrap.appendChild(s);
-                        el.appendChild(wrap);
-                        chars.push(s);
-                    });
-                } else if (node.nodeName === 'BR') {
-                    el.appendChild(document.createElement('br'));
-                }
-            });
-
-            return chars;
-        }
-
-        function anim_01(el) {
-            const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            el.style.opacity = '1';
-            if (reduceMotion) return;
-
-            const chars = split(el);
-            chars.forEach((ch, i) => {
-                ch.style.cssText = 'display:inline-block; line-height:1.18; transform:translateY(112%); transition:none';
-                setTimeout(() => {
-                    ch.style.transition = `transform 0.55s ease ${i * 45}ms`;
-                    ch.style.transform = 'translateY(0)';
-                }, 20);
-            });
-        }
-
-        const animatedText = document.querySelectorAll('.text-animate');
         const releaseApiUrl = 'https://api.github.com/repos/dongkkase/BookManager/releases/latest';
 
         function assetForPlatform(assets, platform) {
@@ -1205,12 +986,14 @@
 
             const dots = Array.from(slider.querySelectorAll('[data-demo-dot]'));
             const count = document.querySelector('[data-demo-count]');
-            const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+            let resumeVideo = false;
             let currentIndex = 0;
             let timer = null;
             let hasFocus = slider.contains(document.activeElement);
 
             function showSlide(index) {
+                resumeVideo = false;
                 currentIndex = (index + slides.length) % slides.length;
                 slides.forEach((slide, slideIndex) => {
                     const active = slideIndex === currentIndex;
@@ -1221,8 +1004,9 @@
                     if (video) {
                         if (active) {
                             video.currentTime = 0;
-                            video.muted = true;
-                            video.play()?.catch(() => {});
+                            resumeVideo = motionPreference.matches;
+                            if (resumeVideo) video.pause();
+                            else video.play().catch(() => {});
                         } else {
                             video.pause();
                         }
@@ -1245,7 +1029,7 @@
             }
 
             function canAutoAdvance() {
-                return !reduceMotion && slides.length > 1
+                return !motionPreference.matches && !document.hidden && slides.length > 1
                     && !slider.matches(':hover') && !hasFocus;
             }
 
@@ -1262,6 +1046,9 @@
 
             slides.forEach((slide, slideIndex) => {
                 const video = slide.querySelector('video');
+                video?.addEventListener('play', () => {
+                    if (slideIndex === currentIndex && !video.paused) resumeVideo = false;
+                });
                 video?.addEventListener('ended', () => {
                     if (slideIndex === currentIndex) startTimer();
                 });
@@ -1294,23 +1081,21 @@
                 startTimer();
             });
 
+            motionPreference.addEventListener('change', () => {
+                const video = slides[currentIndex].querySelector('video');
+                if (video && motionPreference.matches) {
+                    resumeVideo = !video.paused;
+                    video.pause();
+                } else if (video && resumeVideo) {
+                    resumeVideo = false;
+                    video.play().catch(() => {});
+                }
+                startTimer();
+            });
+            document.addEventListener('visibilitychange', startTimer);
+
             showSlide(0);
             startTimer();
-        }
-
-        if ('IntersectionObserver' in window) {
-            const observer = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    if (entry.isIntersecting) {
-                        anim_01(entry.target);
-                        observer.unobserve(entry.target);
-                    }
-                });
-            }, { threshold: 0.3 });
-
-            animatedText.forEach(el => observer.observe(el));
-        } else {
-            animatedText.forEach(anim_01);
         }
 
         updateDownloadButtons();

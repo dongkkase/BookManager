@@ -81,75 +81,6 @@
             color: inherit;
         }
 
-        /* 배경 이동 애니메이션 */
-        @keyframes moveHeroBg {
-            0% {
-                transform: translate(0, 0);
-            }
-            100% {
-                transform: translate(-8%, -8%);
-            }
-        }
-
-        /* 블러 효과 애니메이션 */
-        @keyframes blurHeroBg {
-            0% {
-                filter: blur(0px);
-            }
-            100% {
-                filter: blur(4px);
-            }
-        }
-
-        .hero {
-            min-height: 60vh;
-            display: grid;
-            align-items: end;
-            padding: 96px clamp(20px, 6vw, 72px) 72px;
-            position: relative;
-            overflow: hidden;
-            border-bottom: 1px solid var(--line);
-            z-index: 1; /* 콘텐츠를 가상 요소 위에 유지 */
-            background-color: var(--bg); /* 기본 배경색 */
-        }
-
-        /* 배경 이미지 및 오버레이를 위한 가상 요소 추가 */
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: -10%;
-            left: -10%;
-            width: 120%;
-            height: 120%;
-            background:
-                linear-gradient(90deg, rgba(10, 12, 13, 0.96) 0%, rgba(10, 12, 13, 0.84) 38%, rgba(10, 12, 13, 0.46) 68%, rgba(10, 12, 13, 0.68) 100%),
-                linear-gradient(180deg, rgba(10, 12, 13, 0.16) 0%, rgba(10, 12, 13, 0.66) 72%, rgba(10, 12, 13, 0.96) 100%),
-                url("bg.webp"),
-                #101214;
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            z-index: -1;
-            
-            /* 이동 속도는 60초, 블러 속도는 10초로 별개 지정 */
-            animation: 
-                moveHeroBg 60s ease-in-out infinite alternate,
-                blurHeroBg 4s ease-in-out infinite alternate;
-        }
-
-        .hero-inner {
-            max-width: 850px;
-            position: relative;
-            text-shadow: 0 2px 18px rgba(0, 0, 0, 0.34);
-        }
-
-        .eyebrow {
-            margin: 0 0 14px;
-            color: var(--green);
-            font-size: 0.95rem;
-            font-weight: 700;
-        }
-
         .site-top-nav {
             position: fixed;
             top: 14px;
@@ -187,76 +118,11 @@
             color: #ffffff;
         }
 
-        h1 {
-            margin: 0;
-            font-size: 5.5rem;
-            line-height: 1.18;
-            letter-spacing: 0;
-        }
-
-        .animated-title {
-            display: inline-block;
-            position: relative;
-            max-width: 100%;
-            line-height: 1.18;
-            padding-bottom: 0.18em;
-            overflow: visible;
-            color: #eef3f7;
-        }
-
-        .js .text-animate {
-            opacity: 0;
-        }
-
-        .animated-title .char {
-            line-height: 1.18;
-            color: transparent;
-            background: linear-gradient(180deg, #ffffff 0%, #e5edf2 58%, #b9c8d0 100%);
-            -webkit-background-clip: text;
-            background-clip: text;
-            will-change: transform;
-        }
-
-        .lead {
-            max-width: 760px;
-            margin: 24px 0 0;
-            color: var(--muted);
-            font-size: clamp(1.05rem, 2vw, 1.28rem);
-        }
-
-        .hero-message {
-            margin: 18px 0 0;
-            font-size: clamp(1.65rem, 3.5vw, 2.8rem);
-            font-weight: 700;
-            line-height: 1.4;
-        }
-
         .actions {
             display: flex;
             flex-wrap: wrap;
             gap: 12px;
             margin-top: 30px;
-        }
-
-        .support-badges {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 18px;
-        }
-
-        .support-badge {
-            display: inline-flex;
-            align-items: center;
-            min-height: 32px;
-            padding: 0 11px;
-            border: 1px solid rgba(238, 243, 247, 0.18);
-            border-radius: 999px;
-            color: var(--muted);
-            background: rgba(16, 18, 20, 0.58);
-            backdrop-filter: blur(8px);
-            font-size: 0.9rem;
-            font-weight: 700;
         }
 
         .button {
@@ -617,37 +483,6 @@
                 padding: 6px 10px;
             }
 
-            .hero {
-                min-height: 76vh;
-                padding-top: 96px;
-                /* 기존 배경 제거 */
-                background-image: none;
-                background-color: var(--bg);
-            }
-            
-            /* 가상 요소를 모바일에 맞게 수정 */
-            .hero::before {
-                /* 모바일 그라데이션 및 이미지 복제 */
-                background:
-                    linear-gradient(180deg, rgba(10, 12, 13, 0.68) 0%, rgba(10, 12, 13, 0.94) 56%, rgba(10, 12, 13, 0.98) 100%),
-                    linear-gradient(90deg, rgba(10, 12, 13, 0.66), rgba(10, 12, 13, 0.34)),
-                    url("bg.webp");
-                background-size: cover;
-                background-position: center top;
-                background-repeat: no-repeat;
-                
-                /* 미묘한 움직임을 위해 크기와 위치를 더 늘림 */
-                width: 130%; 
-                height: 130%;
-                top: -15%;
-                left: -15%;
-                
-                /* 애니메이션은 동일하게 유지 (가상 요소의 새로운 크기와 위치로 작동) */
-                animation:
-                    moveHeroBg 60s ease-in-out infinite alternate,
-                    blurHeroBg 4s ease-in-out infinite alternate;
-            }
-
             .button {
                 width: 100%;
             }
@@ -699,28 +534,18 @@
                 height: 36px;
                 font-size: 1.45rem;
             }
-
-            h1 {
-                font-size: 3.4rem;
-            }
-        }
-
-        @media (max-width: 420px) {
-            h1 {
-                font-size: 2.65rem;
-            }
         }
 
         @media (prefers-reduced-motion: reduce) {
-            .hero::before {
-                animation: none;
-            }
-
-            .animated-title {
-                opacity: 1;
+            .demo-slide {
+                transition: none;
             }
         }
     </style>
+    <link rel="stylesheet" href="intro-hero.css">
+    <link rel="stylesheet" href="intro-motion.css">
+    <script defer src="vendor/motion-mini.js"></script>
+    <script defer src="intro-motion.js"></script>
 </head>
 <body>
     <nav class="site-top-nav" aria-label="프로젝트 소개 페이지">
@@ -734,7 +559,7 @@
     <header class="hero">
         <div class="hero-inner">
             <p class="eyebrow">만화책 · 전자책 · 문서 · 오디오북을 위한 나만의 서재</p>
-            <h1 class="animated-title text-animate" aria-label="BookManager">BookManager</h1>
+            <h1>BookManager</h1>
             <p class="hero-message">흩어진 책을 한곳에.<br>정리부터 감상까지.</p>
             <p class="lead">PC, 외장하드, NAS에 있는 책을 한곳에서 찾으세요. 여러 폴더에 흩어진 시리즈도 컬렉션으로 묶어 둘 수 있습니다. 내장 뷰어로 바로 읽거나 Readive로 보내 휴대폰에서 펼쳐 보세요.</p>
             <div class="actions">
@@ -802,7 +627,7 @@
         <section id="demo" class="demo-section" aria-labelledby="demo-title">
             <div class="demo-header">
                 <div>
-                    <h2 id="demo-title" class="text-animate">내 서재가 달라지는 과정</h2>
+                    <h2 id="demo-title">내 서재가 달라지는 과정</h2>
                     <p class="section-lead">라이브러리 탐색부터 파일 정리, 책 정보 편집, 읽기와 모바일 전송까지 실제 앱 화면으로 살펴보세요.</p>
                 </div>
                 <span class="demo-count" data-demo-count>1 / 11</span>
@@ -810,7 +635,7 @@
             <div class="demo-slider" data-demo-slider aria-label="BookManager 데모 화면">
                 <div class="demo-viewport">
                     <figure class="demo-slide demo-slide-video active" aria-hidden="false">
-                        <video src="demo/demo0.mp4" aria-label="BookManager 라이브러리 탐색 데모 영상" autoplay muted playsinline controls preload="auto"></video>
+                        <video src="demo/demo0.mp4" aria-label="BookManager 라이브러리 탐색 데모 영상" poster="demo/demo0.png" muted playsinline controls preload="metadata"></video>
                         <figcaption class="demo-caption">
                             <span><strong>표지로 둘러보는 나의 라이브러리</strong>폴더에 쌓인 책을 표지와 책 정보로 확인하고, 읽고 싶은 책을 찾습니다.</span>
                             <em class="demo-badge">관리 프로그램</em>
@@ -906,7 +731,7 @@
         </section>
 
         <section aria-labelledby="library-title">
-            <h2 id="library-title" class="text-animate">제목이 가물가물해도, 기억나는 단어로</h2>
+            <h2 id="library-title">제목이 가물가물해도, 기억나는 단어로</h2>
             <p class="section-lead">PC, 외장하드, NAS의 폴더를 라이브러리로 등록하세요. 여러 폴더를 오가지 않고 파일명과 책 정보, 본문 속 단어로 원하는 책을 찾을 수 있습니다.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -925,7 +750,7 @@
         </section>
 
         <section aria-labelledby="organize-title">
-            <h2 id="organize-title" class="text-animate">합본 만화와 페이지 정리</h2>
+            <h2 id="organize-title">합본 만화와 페이지 정리</h2>
             <p class="section-lead">여러 권이 한 파일에 들어 있거나 페이지 이름이 뒤섞인 만화를 정리하세요. 파일이나 폴더를 끌어다 놓고, 바뀔 이름과 저장 위치를 확인한 뒤 실행합니다.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -945,7 +770,7 @@
         </section>
 
         <section aria-labelledby="ebook-tools-title">
-            <h2 id="ebook-tools-title" class="text-animate">TXT와 EPUB 편집</h2>
+            <h2 id="ebook-tools-title">TXT와 EPUB 편집</h2>
             <p class="section-lead">파일 도구에서 읽기 불편한 줄바꿈을 정리하거나, 직접 쓴 글에 목차와 표지를 더해 전자책으로 만들 수 있습니다.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -964,7 +789,7 @@
         </section>
 
         <section aria-labelledby="metadata-title">
-            <h2 id="metadata-title" class="text-animate">파일명만 있던 책에, 표지와 이야기를</h2>
+            <h2 id="metadata-title">파일명만 있던 책에, 표지와 이야기를</h2>
             <p class="section-lead">한국웹툰에서 만화 정보를, Audible에서 오디오북 정보를 찾아보세요. 리디북스, Google Books 등에서도 표지·작가·줄거리를 검색해 내 책에 적용할 수 있습니다.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -984,7 +809,7 @@
         </section>
 
         <section aria-labelledby="reader-title">
-            <h2 id="reader-title" class="text-animate">읽고 싶은 책은 바로 열고, 듣고 싶은 책은 재생</h2>
+            <h2 id="reader-title">읽고 싶은 책은 바로 열고, 듣고 싶은 책은 재생</h2>
             <p class="section-lead">만화책, EPUB, PDF, TXT와 오디오북을 내장 뷰어에서 감상하세요. 책갈피와 마지막 읽은 위치를 저장해 다음에 다시 펼치기도 편합니다.</p>
             <div class="split">
                 <div class="list-panel">
@@ -1009,7 +834,7 @@
         </section>
 
         <section aria-labelledby="sharing-title">
-            <h2 id="sharing-title" class="text-animate">PC에서 정리한 서재를, 내 기기에서도</h2>
+            <h2 id="sharing-title">PC에서 정리한 서재를, 내 기기에서도</h2>
             <p class="section-lead">책을 정리하는 곳과 읽는 기기가 달라도 자연스럽게 연결하세요. Readive로 파일을 보내거나, 사용하는 앱에서 공유 라이브러리를 열 수 있습니다.</p>
             <div class="split">
                 <div class="list-panel">
@@ -1037,7 +862,7 @@
         </section>
 
         <section aria-labelledby="formats-title">
-            <h2 id="formats-title" class="text-animate">모아 둔 파일, 익숙한 형식 그대로</h2>
+            <h2 id="formats-title">모아 둔 파일, 익숙한 형식 그대로</h2>
             <p class="section-lead">만화책부터 문서와 오디오북까지 하나의 라이브러리에서 관리합니다. 지원하는 작업과 메타데이터 저장 방식은 파일 형식에 따라 다릅니다.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -1056,7 +881,7 @@
         </section>
 
         <section aria-labelledby="faq-title">
-            <h2 id="faq-title" class="text-animate">시작하기 전에 궁금한 점</h2>
+            <h2 id="faq-title">시작하기 전에 궁금한 점</h2>
             <details class="faq-item">
                 <summary>무료로 사용할 수 있나요?</summary>
                 <p>BookManager는 MIT 라이선스로 공개된 무료 오픈소스 앱입니다. Windows와 macOS를 지원하며, 앱 언어는 한국어·영어·일본어 중에서 선택할 수 있습니다. 외부 API를 사용하는 검색·AI·TTS 기능은 해당 서비스의 이용 조건과 요금이 적용될 수 있습니다.</p>
@@ -1106,50 +931,6 @@
         </nav>
     </footer>
     <script>
-        function split(el) {
-            const nodes = Array.from(el.childNodes);
-            el.innerHTML = '';
-            const chars = [];
-
-            nodes.forEach(node => {
-                if (node.nodeType === Node.TEXT_NODE) {
-                    node.textContent.split('').forEach(ch => {
-                        const wrap = document.createElement('span');
-                        wrap.style.cssText = ch === ' '
-                            ? 'display:inline-block; overflow:hidden; vertical-align:bottom; white-space:pre; line-height:1.18; padding-bottom:0.16em; margin-bottom:-0.16em'
-                            : 'display:inline-block; overflow:hidden; vertical-align:bottom; line-height:1.18; padding-bottom:0.16em; margin-bottom:-0.16em';
-
-                        const s = document.createElement('span');
-                        s.className = 'char';
-                        s.textContent = ch;
-                        wrap.appendChild(s);
-                        el.appendChild(wrap);
-                        chars.push(s);
-                    });
-                } else if (node.nodeName === 'BR') {
-                    el.appendChild(document.createElement('br'));
-                }
-            });
-
-            return chars;
-        }
-
-        function anim_01(el) {
-            const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            el.style.opacity = '1';
-            if (reduceMotion) return;
-
-            const chars = split(el);
-            chars.forEach((ch, i) => {
-                ch.style.cssText = 'display:inline-block; line-height:1.18; transform:translateY(112%); transition:none';
-                setTimeout(() => {
-                    ch.style.transition = `transform 0.55s ease ${i * 45}ms`;
-                    ch.style.transform = 'translateY(0)';
-                }, 20);
-            });
-        }
-
-        const animatedText = document.querySelectorAll('.text-animate');
         const releaseApiUrl = 'https://api.github.com/repos/dongkkase/BookManager/releases/latest';
 
         function assetForPlatform(assets, platform) {
@@ -1199,12 +980,14 @@
 
             const dots = Array.from(slider.querySelectorAll('[data-demo-dot]'));
             const count = document.querySelector('[data-demo-count]');
-            const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+            let resumeVideo = false;
             let currentIndex = 0;
             let timer = null;
             let hasFocus = slider.contains(document.activeElement);
 
             function showSlide(index) {
+                resumeVideo = false;
                 currentIndex = (index + slides.length) % slides.length;
                 slides.forEach((slide, slideIndex) => {
                     const active = slideIndex === currentIndex;
@@ -1215,8 +998,9 @@
                     if (video) {
                         if (active) {
                             video.currentTime = 0;
-                            video.muted = true;
-                            video.play()?.catch(() => {});
+                            resumeVideo = motionPreference.matches;
+                            if (resumeVideo) video.pause();
+                            else video.play().catch(() => {});
                         } else {
                             video.pause();
                         }
@@ -1239,7 +1023,7 @@
             }
 
             function canAutoAdvance() {
-                return !reduceMotion && slides.length > 1
+                return !motionPreference.matches && !document.hidden && slides.length > 1
                     && !slider.matches(':hover') && !hasFocus;
             }
 
@@ -1256,6 +1040,9 @@
 
             slides.forEach((slide, slideIndex) => {
                 const video = slide.querySelector('video');
+                video?.addEventListener('play', () => {
+                    if (slideIndex === currentIndex && !video.paused) resumeVideo = false;
+                });
                 video?.addEventListener('ended', () => {
                     if (slideIndex === currentIndex) startTimer();
                 });
@@ -1288,23 +1075,21 @@
                 startTimer();
             });
 
+            motionPreference.addEventListener('change', () => {
+                const video = slides[currentIndex].querySelector('video');
+                if (video && motionPreference.matches) {
+                    resumeVideo = !video.paused;
+                    video.pause();
+                } else if (video && resumeVideo) {
+                    resumeVideo = false;
+                    video.play().catch(() => {});
+                }
+                startTimer();
+            });
+            document.addEventListener('visibilitychange', startTimer);
+
             showSlide(0);
             startTimer();
-        }
-
-        if ('IntersectionObserver' in window) {
-            const observer = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    if (entry.isIntersecting) {
-                        anim_01(entry.target);
-                        observer.unobserve(entry.target);
-                    }
-                });
-            }, { threshold: 0.3 });
-
-            animatedText.forEach(el => observer.observe(el));
-        } else {
-            animatedText.forEach(anim_01);
         }
 
         updateDownloadButtons();

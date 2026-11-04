@@ -7,10 +7,12 @@ const foldButtons = [...foldOptions.querySelectorAll('[data-fold-view]')];
 const sources = panel.querySelectorAll('source[data-view]');
 
 function showDeviceView(view) {
+    if (gallery.dataset.deviceView === view) return;
     gallery.dataset.deviceView = view;
     for (const source of sources) {
         source.media = source.dataset.view === view ? 'all' : 'not all';
     }
+    gallery.dispatchEvent(new Event('deviceviewchange'));
 }
 
 function selectDevice(tab) {

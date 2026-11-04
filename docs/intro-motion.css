@@ -1,0 +1,65 @@
+@keyframes intro-rise {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes intro-title {
+    from { opacity: 0.2; clip-path: inset(0 0 85%); transform: translateY(0.14em); }
+    to { opacity: 1; clip-path: inset(0); transform: none; }
+}
+
+@keyframes intro-artwork {
+    from { opacity: 0.3; transform: translateY(10px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+}
+
+@media screen and (prefers-reduced-motion: no-preference) {
+    .hero :is(.eyebrow, .hero-message, .lead, .actions, .support-badges) {
+        animation: intro-rise 480ms cubic-bezier(0.2, 0.75, 0.25, 1) backwards;
+    }
+
+    .hero h1 {
+        animation: intro-title 600ms 45ms cubic-bezier(0.18, 0.78, 0.22, 1) backwards;
+    }
+
+    .hero .hero-message { animation-delay: 90ms; }
+    .hero .lead { animation-delay: 135ms; }
+    .hero .actions { animation-delay: 175ms; }
+    .hero .support-badges { animation-delay: 210ms; }
+    .hero :is(.actions, .support-badges):focus-within { animation: none; }
+
+    .hero-artwork {
+        animation: intro-artwork 650ms 100ms cubic-bezier(0.2, 0.75, 0.25, 1) backwards;
+    }
+
+    :is(.button, .site-top-link, .preview-pause, .device-tabs button, .fold-options button) {
+        transition: translate 160ms ease-out, background-color 160ms, border-color 160ms, color 160ms;
+    }
+
+    :is(.button, .site-top-link, .device-tabs button, .fold-options button):active {
+        translate: 0 1px;
+    }
+
+    #guides .feature {
+        transition: border-color 180ms, background-color 180ms;
+    }
+
+    .hero-slide-dot::before {
+        transition: width 180ms ease-out, background-color 180ms;
+    }
+
+    .faq-item[open] > p {
+        animation: intro-rise 220ms ease-out;
+    }
+}
+
+@media screen and (prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine) {
+    :is(.button, .site-top-link, .preview-pause):hover:not(:active) {
+        translate: 0 -2px;
+    }
+}
+
+#guides .feature:is(:hover, :focus-within) {
+    border-color: var(--accent);
+    background-color: var(--panel-strong);
+}
