@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>리디브(Readive) – 만화·전자책·오디오북 리더</title>
-    <meta name="description" content="기기·NAS의 만화, 전자책, 오디오북을 리디브에서 읽고 들으세요. 웹툰 스크롤, EPUB·TXT 낭독, 독서 캘린더와 BookManager 연동을 지원합니다.">
+    <meta name="description" content="기기나 도서 서버에서 만화·전자책·오디오북을 가져와 저자와 시리즈로 찾으세요. Premium에서는 EPUB·TXT를 역할별 낭독 TTS로 듣거나 글의 분위기에 맞는 AI 배경음악을 들을 수 있습니다.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dongkkase.github.io/BookManager/readive/">
     <link rel="alternate" hreflang="ko" href="https://dongkkase.github.io/BookManager/readive/">
@@ -12,7 +12,7 @@
     <link rel="alternate" hreflang="x-default" href="https://dongkkase.github.io/BookManager/readive/">
     <meta property="og:type" content="website">
     <meta property="og:title" content="리디브(Readive) – 만화·전자책·오디오북 리더">
-    <meta property="og:description" content="기기·NAS의 만화, 전자책, 오디오북을 리디브에서 읽고 들으세요. 웹툰 스크롤, EPUB·TXT 낭독, 독서 캘린더와 BookManager 연동을 지원합니다.">
+    <meta property="og:description" content="기기나 도서 서버에서 만화·전자책·오디오북을 가져와 저자와 시리즈로 찾으세요. Premium에서는 EPUB·TXT를 역할별 낭독 TTS로 듣거나 글의 분위기에 맞는 AI 배경음악을 들을 수 있습니다.">
     <meta property="og:url" content="https://dongkkase.github.io/BookManager/readive/">
     <meta property="og:image" content="https://dongkkase.github.io/BookManager/readive/screenshots/ko/overview.webp">
     <meta property="og:image:width" content="1200">
@@ -20,7 +20,7 @@
     <meta property="og:image:alt" content="전자책 본문, 만화 페이지와 오디오북 재생 화면을 나란히 보여주는 리디브">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="리디브(Readive) – 만화·전자책·오디오북 리더">
-    <meta name="twitter:description" content="기기·NAS의 만화, 전자책, 오디오북을 리디브에서 읽고 들으세요. 웹툰 스크롤, EPUB·TXT 낭독, 독서 캘린더와 BookManager 연동을 지원합니다.">
+    <meta name="twitter:description" content="기기나 도서 서버에서 만화·전자책·오디오북을 가져와 저자와 시리즈로 찾으세요. Premium에서는 EPUB·TXT를 역할별 낭독 TTS로 듣거나 글의 분위기에 맞는 AI 배경음악을 들을 수 있습니다.">
     <meta name="twitter:image" content="https://dongkkase.github.io/BookManager/readive/screenshots/ko/overview.webp">
     <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
     <script type="application/ld+json">
@@ -31,7 +31,7 @@
         "name": "Readive",
         "alternateName": "리디브",
         "url": "https://dongkkase.github.io/BookManager/readive/",
-        "description": "기기·NAS의 만화, 전자책, 오디오북을 리디브에서 읽고 들으세요. 웹툰 스크롤, EPUB·TXT 낭독, 독서 캘린더와 BookManager 연동을 지원합니다.",
+        "description": "기기나 도서 서버에서 만화·전자책·오디오북을 가져와 저자와 시리즈로 찾으세요. Premium에서는 EPUB·TXT를 역할별 낭독 TTS로 듣거나 글의 분위기에 맞는 AI 배경음악을 들을 수 있습니다.",
         "applicationCategory": "ReferenceApplication",
         "operatingSystem": ["iOS", "iPadOS", "Android"],
         "image": "https://dongkkase.github.io/BookManager/readive/app.png",
@@ -520,7 +520,7 @@
                 <p class="eyebrow">iPhone · iPad · Android</p>
                 <h1>Readive <small>(리디브)</small></h1>
                 <p class="hero-message">만화·전자책·오디오북을<br>한 보관함에서</p>
-                <p class="lead">기기나 NAS에서 책을 가져오세요. 만화는 두 쪽으로 펼쳐 보고, 전자책은 읽던 구절부터 음성으로 들을 수 있습니다.</p>
+                <p class="lead">기기나 NAS에서 책을 가져오세요. Premium에서는 EPUB·TXT를 역할별 낭독으로 듣거나, 장면에 어울리는 AI 배경음악을 들으며 읽을 수 있습니다.</p>
             </div>
             <img class="hero-artwork" src="screenshots/ko/overview.webp" width="1200" height="800" alt="전자책 본문, 만화 페이지와 오디오북 재생 화면을 나란히 보여주는 리디브" fetchpriority="high">
             <div class="hero-extra">
@@ -555,11 +555,15 @@
             <div class="feature-grid">
                 <article class="feature">
                     <h3>내 기기와 원격 보관함</h3>
-                    <p>기기 파일과 NAS·클라우드의 책을 가져오고, 제목과 책 정보로 검색하세요. 컬렉션으로 읽고 싶은 책을 따로 묶을 수 있습니다.</p>
+                    <p>도서 서버나 NAS에서 가져온 책은 내 기기 보관함에서 저자와 시리즈로 찾을 수 있습니다. 다음에 읽을 책은 컬렉션에 모아 두세요.</p>
                 </article>
                 <article class="feature">
                     <h3>웹툰부터 오디오북까지</h3>
                     <p>만화는 펼침 보기로, 웹툰은 세로 스크롤로 읽으세요. EPUB·TXT는 읽어주기를 켤 수 있고 오디오북은 듣던 지점부터 재생합니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>AI 배경음악 · 실험 기능</h3>
+                    <p>EPUB·TXT를 읽을 때 글의 분위기에 맞는 곡을 골라 재생합니다. Premium에서 분석 모델과 음악을 미리 내려받으면 오프라인에서도 들을 수 있습니다.</p>
                 </article>
                 <article class="feature">
                     <h3>오늘의 추천 · 실험 기능</h3>
@@ -676,7 +680,7 @@
 
         <section aria-labelledby="sources-title">
             <h2 id="sources-title">기기·PC·원격 저장소에서 가져오기</h2>
-            <p class="section-lead">기기에서 파일을 고르거나, 평소 사용하는 저장소에 연결하세요. 읽을 책을 미리 내려받아 두면 이동 중에도 네트워크 연결 없이 감상할 수 있습니다.</p>
+            <p class="section-lead">기기에 있는 파일을 열거나 평소 쓰는 서버에서 책을 가져오세요. 보관함에 내려받은 책은 오프라인에서도 읽을 수 있고, 검색과 컬렉션으로 다시 찾을 수 있습니다.</p>
             <div class="split">
                 <article class="list-panel">
                     <h3>기기 파일과 PC에서 가져오기</h3>
@@ -684,16 +688,15 @@
                         <li>기기에서 파일을 고르거나 다른 앱의 EPUB·PDF·TXT·만화를 리디브로 열기</li>
                         <li>같은 네트워크의 PC 웹 브라우저에서 Readive로 업로드</li>
                         <li>Mac에서는 Finder의 USB 파일 공유로 iPhone·iPad에 책과 폴더 복사</li>
-                        <li>보관함 검색과 컬렉션으로 읽을 책 정리</li>
                     </ul>
                 </article>
                 <article class="list-panel">
-                    <h3>NAS·서버·클라우드 연결</h3>
+                    <h3>도서 서버와 원격 저장소</h3>
                     <ul>
-                        <li>SMB, FTP, SFTP, WebDAV로 공유 폴더 탐색</li>
-                        <li>Kavita·Komga 등 OPDS 카탈로그에서 책을 찾고 기기로 가져오기</li>
-                        <li>Dropbox, OneDrive의 책 파일 연결</li>
-                        <li>YACReader Library의 만화를 CBZ 파일로 보관하기</li>
+                        <li>Kavita·Komga·YACReader Library·OPDS 카탈로그에서 책을 찾고 스트리밍하거나 기기로 가져오기</li>
+                        <li><strong>SMB·FTP·SFTP</strong>로 NAS나 파일 서버의 폴더를 둘러보고 책을 내려받기</li>
+                        <li><strong>WebDAV</strong> 폴더를 읽기 전용으로 탐색하고 선택한 파일 가져오기</li>
+                        <li><strong>Dropbox·OneDrive</strong> 계정을 연결해 클라우드 폴더에서 책 가져오기</li>
                     </ul>
                 </article>
             </div>
@@ -719,8 +722,8 @@
         </section>
 
         <section aria-labelledby="audio-title">
-            <h2 id="audio-title">오디오북 재생과 전자책 낭독</h2>
-            <p class="section-lead">이동하거나 다른 일을 하는 동안에는 듣는 독서로 바꿔보세요. 오디오북을 재생하거나 EPUB·TXT의 본문을 음성으로 들을 수 있습니다.</p>
+            <h2 id="audio-title">오디오북, 역할별 낭독과 AI 독서 배경음악</h2>
+            <p class="section-lead">오디오북은 마지막으로 듣던 지점에서 이어 들으세요. EPUB·TXT에서는 글을 소리 내어 읽어주는 목소리와 독서 중에 흐르는 배경음악을 따로 고를 수 있습니다.</p>
             <div class="split">
                 <article class="list-panel">
                     <h3>오디오북과 CarPlay</h3>
@@ -733,12 +736,19 @@
                     </ul>
                 </article>
                 <article class="list-panel">
-                    <h3>전자책을 읽어주는 TTS</h3>
+                    <h3>기본 음성과 역할별 낭독(TTS)</h3>
                     <ul>
-                        <li>EPUB·TXT를 기기의 기본 음성으로 읽어주기</li>
-                        <li>몰입 모드에서 읽어주는 구절을 따라가며 속도 조절</li>
-                        <li>Premium의 Supertonic 목소리로 대사와 서술을 구분해 듣기</li>
-                        <li>Supertonic 모델을 내려받은 뒤 기기에서 오프라인 음성 생성</li>
+                        <li>기기 기본 음성으로 EPUB·TXT를 무료로 듣고, 몰입 모드에서 현재 구절 따라 읽기</li>
+                        <li>Premium 음성 모델을 내려받아 10가지 목소리로 오프라인 낭독</li>
+                        <li>일반 문장, 대사, 속마음마다 목소리와 읽는 속도, 구절 사이의 쉼 조절</li>
+                    </ul>
+                </article>
+                <article class="list-panel">
+                    <h3>AI 독서 배경음악 · 실험 기능</h3>
+                    <ul>
+                        <li>Premium에서 분석 모델과 음원 168곡을 내려받아 EPUB·TXT를 읽을 때 재생</li>
+                        <li>현재 읽는 대목에 맞춰 곡을 자동으로 바꾸거나 원하는 분위기와 장르를 직접 선택</li>
+                        <li>낭독 중에는 음악이 작게 흐르고, 낭독을 일시정지하면 음악도 함께 멈춤</li>
                     </ul>
                 </article>
             </div>
@@ -767,7 +777,7 @@
         <section aria-labelledby="bookmanager-title">
             <p class="section-label">BookManager 연동</p>
             <h2 id="bookmanager-title">PC에서 정리한 서재를 Readive로</h2>
-            <p class="section-lead">BookManager로 PC에 정리한 책을 모바일에서 탐색하고 가져오세요. 책 정보와 읽던 위치도 함께 연결합니다.</p>
+            <p class="section-lead">PC에서 BookManager로 정리한 책을 가져오면 표지와 책 정보도 리디브에서 볼 수 있습니다. 연동한 책은 읽던 위치에서 이어 읽으세요.</p>
             <div class="split">
                 <article class="list-panel">
                     <h3>QR로 연결하고, 읽을 책 고르기</h3>
@@ -786,19 +796,20 @@
         </section>
 
         <section aria-labelledby="formats-title">
-            <h2 id="formats-title">내가 가진 책, 익숙한 파일 그대로</h2>
+            <h2 id="formats-title">지원 파일 형식과 메타데이터</h2>
+            <p class="section-lead">파일에 담긴 메타데이터로 책을 찾을 수 있습니다. 내 기기 보관함에서 작가나 시리즈명을 검색하거나, 장르와 출판사 조건을 함께 골라 목록을 좁혀 보세요.</p>
             <div class="feature-grid">
                 <article class="feature">
                     <h3>만화책·이미지</h3>
-                    <p>CBZ, ZIP, CBR, RAR, CB7, 7Z, CBT, TAR와 이미지 파일</p>
+                    <p>CBZ, ZIP, CBR, RAR, CB7, 7Z, CBT, TAR와 이미지 파일을 엽니다. 만화 압축 파일에 ComicInfo.xml이 있으면 시리즈와 권수, 글·그림 작가, 줄거리를 확인할 수 있습니다.</p>
                 </article>
                 <article class="feature">
                     <h3>전자책·문서</h3>
-                    <p>EPUB, PDF, TXT, Markdown</p>
+                    <p>EPUB, PDF, TXT, Markdown을 읽을 수 있습니다. EPUB에서는 저자·출판사·ISBN을, PDF에서는 문서에 저장된 저자·주제·키워드를 확인할 수 있습니다.</p>
                 </article>
                 <article class="feature">
                     <h3>오디오북</h3>
-                    <p>MP3, M4A, M4B, FLAC 등 오디오 파일</p>
+                    <p>MP3, M4A, M4B, FLAC 등을 재생합니다. 오디오 정보에서 재생 시간과 함께 파일 태그에 담긴 앨범, 아티스트, 트랙 번호를 볼 수 있습니다.</p>
                 </article>
             </div>
             <p class="note">압축 만화는 단일 볼륨 파일을 지원합니다. 암호가 걸린 ZIP·RAR·7z는 책을 열 때 비밀번호를 입력하세요.</p>
@@ -822,7 +833,8 @@
                     <ul>
                         <li>앱 내 광고 제거</li>
                         <li>단청 라이트·다크 등 추가 테마, 추가 글꼴과 내 글꼴 가져오기</li>
-                        <li>Supertonic 오프라인 음성 모델</li>
+                        <li>10가지 목소리로 듣는 역할별 낭독</li>
+                        <li>글의 분위기에 맞춰 재생하는 AI 독서 배경음악(실험 기능)</li>
                         <li>보관함 자세히 보기와 썸네일 표시 개수 확대</li>
                         <li>누적·월간·연간 독서 인사이트</li>
                     </ul>
@@ -843,7 +855,7 @@
             </details>
             <details class="faq-item">
                 <summary>인터넷 없이 읽고 들을 수 있나요?</summary>
-                <p>기기에 가져오거나 다운로드한 책과 오디오북은 오프라인에서도 열 수 있습니다. 원격 저장소 탐색·다운로드와 기록 동기화에는 네트워크가 필요합니다. Supertonic 음성은 Premium에서 모델을 먼저 내려받으면 기기 안에서 생성할 수 있습니다.</p>
+                <p>기기에 저장한 책과 오디오북은 오프라인에서도 열 수 있습니다. Premium 역할별 낭독은 음성 모델을, AI 독서 배경음악은 분석 모델과 음원을 미리 내려받으면 인터넷 없이 사용할 수 있습니다. 원격 저장소 탐색과 독서 기록 동기화에는 네트워크 연결이 필요합니다.</p>
             </details>
             <details class="faq-item">
                 <summary>다른 기기에도 책 파일이 자동으로 복사되나요?</summary>

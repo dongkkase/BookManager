@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Readive – Comic, ebook and audiobook reader</title>
-    <meta name="description" content="Read comics, ebooks and audiobooks from your device or NAS. Scroll through webtoons, listen to EPUB and TXT, and revisit your books on a reading calendar.">
+    <meta name="description" content="Import comics, ebooks and audiobooks from your device or book server and search by author or series. Premium adds role-based text-to-speech and AI background music for EPUB and TXT.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dongkkase.github.io/BookManager/readive/en/">
     <link rel="alternate" hreflang="ko" href="https://dongkkase.github.io/BookManager/readive/">
@@ -12,7 +12,7 @@
     <link rel="alternate" hreflang="x-default" href="https://dongkkase.github.io/BookManager/readive/">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Readive – Comic, ebook and audiobook reader">
-    <meta property="og:description" content="Read comics, ebooks and audiobooks from your device or NAS. Scroll through webtoons, listen to EPUB and TXT, and revisit your books on a reading calendar.">
+    <meta property="og:description" content="Import comics, ebooks and audiobooks from your device or book server and search by author or series. Premium adds role-based text-to-speech and AI background music for EPUB and TXT.">
     <meta property="og:url" content="https://dongkkase.github.io/BookManager/readive/en/">
     <meta property="og:image" content="https://dongkkase.github.io/BookManager/readive/screenshots/en/overview.webp">
     <meta property="og:image:width" content="1200">
@@ -20,7 +20,7 @@
     <meta property="og:image:alt" content="An ebook page, a comic and an audiobook open side by side in Readive">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Readive – Comic, ebook and audiobook reader">
-    <meta name="twitter:description" content="Read comics, ebooks and audiobooks from your device or NAS. Scroll through webtoons, listen to EPUB and TXT, and revisit your books on a reading calendar.">
+    <meta name="twitter:description" content="Import comics, ebooks and audiobooks from your device or book server and search by author or series. Premium adds role-based text-to-speech and AI background music for EPUB and TXT.">
     <meta name="twitter:image" content="https://dongkkase.github.io/BookManager/readive/screenshots/en/overview.webp">
     <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
     <script type="application/ld+json">
@@ -31,7 +31,7 @@
         "name": "Readive",
         "alternateName": "리디브",
         "url": "https://dongkkase.github.io/BookManager/readive/en/",
-        "description": "Read comics, ebooks and audiobooks from your device or NAS. Scroll through webtoons, listen to EPUB and TXT, and revisit your books on a reading calendar.",
+        "description": "Import comics, ebooks and audiobooks from your device or book server and search by author or series. Premium adds role-based text-to-speech and AI background music for EPUB and TXT.",
         "applicationCategory": "ReferenceApplication",
         "operatingSystem": ["iOS", "iPadOS", "Android"],
         "image": "https://dongkkase.github.io/BookManager/readive/app.png",
@@ -520,7 +520,7 @@
                 <p class="eyebrow">iPhone · iPad · Android</p>
                 <h1>Readive</h1>
                 <p class="hero-message">Comics, ebooks and audiobooks in one library</p>
-                <p class="lead">Bring books from your device or NAS. Read a comic in a two-page spread, or listen to an ebook starting at the passage you last read.</p>
+                <p class="lead">Bring books from your device or NAS. With Premium, listen to EPUB and TXT books with role-based narration, or read with AI background music that fits the scene.</p>
             </div>
             <img class="hero-artwork" src="../screenshots/en/overview.webp" width="1200" height="800" alt="An ebook page, a comic and an audiobook open side by side in Readive" fetchpriority="high">
             <div class="hero-extra">
@@ -555,11 +555,15 @@
             <div class="feature-grid">
                 <article class="feature">
                     <h3>Local and remote libraries</h3>
-                    <p>Import books from your device, NAS and cloud storage, then search by title and book details. Group your next reads into collections.</p>
+                    <p>Find books you’ve imported from a book server or NAS by author or series in your on-device library. Keep your next reads together in a collection.</p>
                 </article>
                 <article class="feature">
                     <h3>From webtoons to audiobooks</h3>
                     <p>Read comics in two-page spreads and scroll through vertical webtoons. Switch on text-to-speech for EPUB or TXT, or resume an audiobook where you left off.</p>
+                </article>
+                <article class="feature">
+                    <h3>AI background music · Experimental</h3>
+                    <p>Readive picks a track to match the mood of the passage you’re reading in EPUB or TXT. With Premium, download the analysis model and music ahead of time to listen offline.</p>
                 </article>
                 <article class="feature">
                     <h3>Today’s pick · Experimental</h3>
@@ -676,7 +680,7 @@
 
         <section aria-labelledby="sources-title">
             <h2 id="sources-title">Import books from a device, computer or server</h2>
-            <p class="section-lead">Choose files on your device or connect to the storage you already use. Download books in advance to enjoy them on the go without a network connection.</p>
+            <p class="section-lead">Open a file on your device or import a book from a server you already use. Books downloaded to your library are available offline, and you can find them again with search and collections.</p>
             <div class="split">
                 <article class="list-panel">
                     <h3>Import from your device or computer</h3>
@@ -684,16 +688,15 @@
                         <li>Choose a file on your device, or open an EPUB, PDF, TXT or comic file in Readive from another app</li>
                         <li>Upload to Readive from a computer&#x27;s web browser on the same network</li>
                         <li>Copy books and folders from a Mac to an iPhone or iPad with Finder USB file sharing</li>
-                        <li>Organize your reading with library search and collections</li>
                     </ul>
                 </article>
                 <article class="list-panel">
-                    <h3>Connect to NAS, servers and cloud storage</h3>
+                    <h3>Book servers and remote storage</h3>
                     <ul>
-                        <li>Browse shared folders over SMB, FTP, SFTP and WebDAV</li>
-                        <li>Browse and import books from OPDS catalogs such as Kavita and Komga</li>
-                        <li>Connect to book files in Dropbox and OneDrive</li>
-                        <li>Save comics from YACReader Library as CBZ files on your device</li>
+                        <li>Find books in Kavita, Komga, YACReader Library or OPDS catalogs and stream them or import them to your device</li>
+                        <li>Browse folders on a NAS or file server over <strong>SMB, FTP or SFTP</strong> and download books</li>
+                        <li>Browse <strong>WebDAV</strong> folders in read-only mode and import selected files</li>
+                        <li>Connect your <strong>Dropbox or OneDrive</strong> account to import books from cloud folders</li>
                     </ul>
                 </article>
             </div>
@@ -719,8 +722,8 @@
         </section>
 
         <section aria-labelledby="audio-title">
-            <h2 id="audio-title">Audiobook playback and text-to-speech</h2>
-            <p class="section-lead">Switch to listening while traveling or doing something else. Play audiobooks or listen to EPUB and TXT with text-to-speech.</p>
+            <h2 id="audio-title">Audiobooks, role-based reading and AI Reading Music</h2>
+            <p class="section-lead">Resume an audiobook where you left off. For EPUB and TXT, you can choose a voice for reading aloud or turn on background music as you read.</p>
             <div class="split">
                 <article class="list-panel">
                     <h3>Audiobooks and CarPlay</h3>
@@ -733,12 +736,19 @@
                     </ul>
                 </article>
                 <article class="list-panel">
-                    <h3>Let text-to-speech read your ebooks</h3>
+                    <h3>Built-in voices and role-based reading</h3>
                     <ul>
-                        <li>Read EPUB and TXT aloud with your device&#x27;s built-in voices</li>
-                        <li>Follow the current passage in immersive mode and adjust the reading speed</li>
-                        <li>Use Premium’s Supertonic voices to distinguish dialogue from narration</li>
-                        <li>Download a Supertonic model to generate speech offline on your device</li>
+                        <li>Listen to EPUB and TXT for free with your device’s built-in text-to-speech and follow the highlighted passage in immersive mode</li>
+                        <li>Download the Premium voice model to listen offline with a choice of 10 voices</li>
+                        <li>Set the voice, reading speed and pauses separately for narration, dialogue and inner thoughts</li>
+                    </ul>
+                </article>
+                <article class="list-panel">
+                    <h3>AI Reading Music · Experimental</h3>
+                    <ul>
+                        <li>With Premium, download the analysis model and 168 tracks to play while reading EPUB or TXT</li>
+                        <li>Let your device match a track to the mood of the passage, or pick the mood and genre yourself</li>
+                        <li>Music plays more quietly during narration and follows its pause and resume controls</li>
                     </ul>
                 </article>
             </div>
@@ -767,7 +777,7 @@
         <section aria-labelledby="bookmanager-title">
             <p class="section-label">BookManager integration</p>
             <h2 id="bookmanager-title">Bring your desktop library to Readive</h2>
-            <p class="section-lead">Browse and import books you organized on your computer with BookManager. Connect book details and reading positions too.</p>
+            <p class="section-lead">Bring books over from BookManager with the covers and book details you organized on your computer. Open a linked book in Readive to continue where you left off.</p>
             <div class="split">
                 <article class="list-panel">
                     <h3>Connect with a QR code and choose your books</h3>
@@ -786,19 +796,20 @@
         </section>
 
         <section aria-labelledby="formats-title">
-            <h2 id="formats-title">Your books, in the formats you already have</h2>
+            <h2 id="formats-title">Supported formats and metadata</h2>
+            <p class="section-lead">Use the metadata in your files to find a book. Search your on-device library by author or series, or combine filters such as genre and publisher to narrow the list.</p>
             <div class="feature-grid">
                 <article class="feature">
                     <h3>Comics and images</h3>
-                    <p>CBZ, ZIP, CBR, RAR, CB7, 7Z, CBT, TAR and image files</p>
+                    <p>Open CBZ, ZIP, CBR, RAR, CB7, 7Z, CBT, TAR and image files. When a comic archive includes ComicInfo.xml, you can see the series, issue number, writer, artist and summary.</p>
                 </article>
                 <article class="feature">
                     <h3>Ebooks and documents</h3>
-                    <p>EPUB, PDF, TXT, Markdown</p>
+                    <p>Read EPUB, PDF, TXT and Markdown files. Check an EPUB’s author, publisher and ISBN, or a PDF’s embedded author, subject and keywords.</p>
                 </article>
                 <article class="feature">
                     <h3>Audiobooks</h3>
-                    <p>MP3, M4A, M4B, FLAC and other audio files</p>
+                    <p>Play MP3, M4A, M4B, FLAC and other audio files. Open the audio information to see the running time and tags such as album, artist and track number.</p>
                 </article>
             </div>
             <p class="note">Readive supports single-volume comic archives. For password-protected ZIP, RAR and 7z files, enter the password when you open the book.</p>
@@ -822,7 +833,8 @@
                     <ul>
                         <li>Remove in-app ads</li>
                         <li>Additional themes, including Dancheong Light and Dark, plus more fonts and custom font imports</li>
-                        <li>Supertonic offline voice models</li>
+                        <li>Role-based reading with 10 voices</li>
+                        <li>AI Reading Music that follows the mood of the text (Experimental)</li>
                         <li>Detailed library views and more thumbnails on screen</li>
                         <li>All-time, monthly and yearly reading insights</li>
                     </ul>
@@ -843,7 +855,7 @@
             </details>
             <details class="faq-item">
                 <summary>Can I read and listen offline?</summary>
-                <p>Books and audiobooks imported or downloaded to your device are available offline. Browsing and downloading from remote storage, and syncing reading data, require a network connection. With Premium, you can generate Supertonic speech on your device after downloading a voice model.</p>
+                <p>Books and audiobooks saved on your device work offline. With Premium, download the voice model for offline role-based reading, or the analysis model and tracks for offline AI Reading Music. Browsing remote storage and syncing reading data require a network connection.</p>
             </details>
             <details class="faq-item">
                 <summary>Are book files automatically copied to my other devices?</summary>
