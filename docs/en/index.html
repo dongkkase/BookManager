@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>BookManager - Organize and enjoy comics, ebooks and audiobooks</title>
-    <meta name="description" content="Manage comics, EPUB, PDF, TXT and audiobooks from your computer, external drives and NAS. A free Windows and macOS app with library and text search, batch file tools, metadata editing, built-in readers and transfers to Readive.">
+    <meta name="description" content="Organize books on your computer, external drives and NAS into collections, edit comic covers and EPUBs, and send books to Readive. Free for Windows and macOS.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dongkkase.github.io/BookManager/en/">
     <link rel="alternate" hreflang="ko" href="https://dongkkase.github.io/BookManager/">
@@ -12,12 +12,12 @@
     <link rel="alternate" hreflang="x-default" href="https://dongkkase.github.io/BookManager/">
     <meta property="og:type" content="website">
     <meta property="og:title" content="BookManager - Your books together, from organizing to reading">
-    <meta property="og:description" content="Build a personal library of comics, ebooks, documents and audiobooks. Find your files, add book details, read on your computer or send books to Readive. Free for Windows and macOS.">
+    <meta property="og:description" content="Organize comics, ebooks and audiobooks into collections and edit covers and EPUBs. Read and listen on your computer, or send books to Readive.">
     <meta property="og:url" content="https://dongkkase.github.io/BookManager/en/">
     <meta property="og:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="BookManager - Your books together, from organizing to reading">
-    <meta name="twitter:description" content="Search and organize comics, ebooks and audiobooks, read with built-in viewers and send books to Readive. Manage your personal library on Windows and macOS.">
+    <meta name="twitter:description" content="Organize comics, ebooks and audiobooks into collections and edit covers and EPUBs. Read and listen on your computer, or send books to Readive.">
     <meta name="twitter:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
     <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
     <link rel="icon" type="image/x-icon" href="../app.ico">
@@ -33,7 +33,7 @@
         "name": "BookManager",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows, macOS",
-        "description": "BookManager is a free, open-source Windows and macOS desktop app for managing local comics, ebooks, documents, and audiobooks. Search libraries and indexed text, organize archives in batches, edit metadata, read and listen with built-in viewers, and transfer files to Readive.",
+        "description": "BookManager is a free, open-source library manager for Windows and macOS. Search comics, ebooks, documents and audiobooks, group them into collections, edit covers and EPUBs, and send books to Readive.",
         "license": "https://github.com/dongkkase/BookManager/blob/main/LICENSE",
         "url": "https://dongkkase.github.io/BookManager/en/",
         "downloadUrl": "https://github.com/dongkkase/BookManager/releases/latest",
@@ -603,6 +603,10 @@
         }
 
         @media (max-width: 720px) {
+            section {
+                scroll-margin-top: 96px;
+            }
+
             .split {
                 grid-template-columns: minmax(0, 1fr);
             }
@@ -727,10 +731,10 @@
 <body>
     <nav class="site-top-nav" aria-label="Product navigation">
         <a class="site-top-link" href="./" aria-current="page">BookManager</a>
+        <a class="site-top-link" href="../readive/en/">Readive</a>
         <a class="site-top-link" href="#features">Features</a>
         <a class="site-top-link" href="#guides">Guides</a>
-        <a class="site-top-link" href="#start">Get started</a>
-        <a class="site-top-link" href="../readive/en/">Readive</a>
+        <a class="site-top-link" href="#start">Download</a>
         <a class="site-top-link" href="../" lang="ko" hreflang="ko" aria-label="한국어 페이지 보기">한국어</a>
     </nav>
     <header class="hero">
@@ -738,7 +742,7 @@
             <p class="eyebrow">Your personal library for comics, ebooks, documents and audiobooks</p>
             <h1 class="animated-title text-animate" aria-label="BookManager">BookManager</h1>
             <p class="hero-message">All your books together.<br>Ready to read and enjoy.</p>
-            <p class="lead">Find and organize books across your computer, external drives and NAS. Add covers and book details, read and listen with built-in viewers, and send books to your mobile device with Readive.</p>
+            <p class="lead">Find books across your computer, external drives and NAS. Group a series into a collection even when its volumes are in different folders. Open a book in the built-in reader or send it to Readive on your phone.</p>
             <div class="actions">
                 <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="mac" aria-label="Download the latest version for macOS">
                     <img class="button-icon" src="../icon_apple.svg" alt="" aria-hidden="true">
@@ -764,16 +768,16 @@
 
     <main>
         <section id="features" aria-labelledby="features-title">
-            <h2 id="features-title">Keep a growing library organized</h2>
-            <p class="section-lead">Find books across folders and edit their details in one place, with batch tools for repetitive tasks.</p>
+            <h2 id="features-title">Organize and read your own books</h2>
+            <p class="section-lead">Add your book folders as libraries. You can build a reading list and check which volumes are missing from a series without moving the files.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>Find books wherever you saved them</h3>
-                    <p>Search libraries across multiple drives, compare possible duplicates and check for missing volumes in a series.</p>
+                    <h3>Choose what to read next</h3>
+                    <p>Save your next volume to Want to Read. To group books by series or subject, select books and folders and add them to a collection.</p>
                 </article>
                 <article class="feature">
-                    <h3>Handle repetitive tasks in batches</h3>
-                    <p>Clean up archive structures and page names, and apply book details to an entire series at once.</p>
+                    <h3>Set covers and details for a series</h3>
+                    <p>Apply the author and publisher across several volumes, then choose a cover for each. Use your own image or select a page from the book.</p>
                 </article>
                 <article class="feature">
                     <h3>Read right where you organize</h3>
@@ -927,8 +931,8 @@
         </section>
 
         <section aria-labelledby="organize-title">
-            <h2 id="organize-title" class="text-animate">Organize multiple books at once</h2>
-            <p class="section-lead">Collections in a single archive and inconsistent page names are easier to manage in batches. Drag in files or folders, preview the results and apply your changes.</p>
+            <h2 id="organize-title" class="text-animate">Organize comic volumes and pages</h2>
+            <p class="section-lead">Split a comic archive into volumes or put pages with inconsistent names back in order. Drag in files or folders and review the output names and destinations before you begin.</p>
             <div class="feature-grid">
                 <article class="feature">
                     <h3>Split collections by volume or chapter</h3>
@@ -943,12 +947,31 @@
                     <p>Rename images with a shared naming rule and adjust their order. You can also check for missing page numbers and reduce image file sizes.</p>
                 </article>
             </div>
-            <p class="note">Preview filenames and the files affected before applying changes. To keep your originals, enable the original backup option in Settings before starting.</p>
+            <p class="note">To keep your original comic files, enable the original backup option in Settings before starting.</p>
+        </section>
+
+        <section aria-labelledby="ebook-tools-title">
+            <h2 id="ebook-tools-title" class="text-animate">Edit TXT files and EPUBs</h2>
+            <p class="section-lead">Use the file tools to fix distracting line breaks, or turn your own writing into an ebook with a cover and table of contents.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>Text Cleaner</h3>
+                    <p>Join lines that break mid-sentence and remove extra spaces. Compare the result with the original side by side and make your own edits.</p>
+                </article>
+                <article class="feature">
+                    <h3>EPUB Studio</h3>
+                    <p>Start a new book or import an existing EPUB. Reorder chapters, edit the text and cover, and preview the book before exporting an EPUB 3 file.</p>
+                </article>
+                <article class="feature">
+                    <h3>EPUB Size Optimizer</h3>
+                    <p>See which images and fonts take up space in a book. Adjust image quality and dimensions, and choose which unused assets to remove.</p>
+                </article>
+            </div>
         </section>
 
         <section aria-labelledby="metadata-title">
             <h2 id="metadata-title" class="text-animate">Give your files covers and stories</h2>
-            <p class="section-lead">Find and compare book details from RIDI, Google Books, AniList, Comic Vine, Amazon and more. Import covers, titles, authors, publishers and summaries to make your library easier to browse.</p>
+            <p class="section-lead">Look up comics in Korean Webtoons or audiobooks in Audible. Sources such as RIDI and Google Books also let you find covers, authors and summaries to add to your books.</p>
             <div class="feature-grid">
                 <article class="feature">
                     <h3>Search for book details</h3>
@@ -973,10 +996,10 @@
                 <div class="list-panel">
                     <h3>A reading view that suits you</h3>
                     <ul>
-                        <li>Single-page and two-page views, scrolling and zoom</li>
+                        <li>Choose Automatic view to fit one or two pages to your window and scroll through vertical webtoons</li>
                         <li>Themes and page transitions to adjust your reading experience</li>
                         <li>Search within EPUB, PDF and TXT files and jump to matching text</li>
-                        <li>Listen to EPUB and TXT with text-to-speech</li>
+                        <li>Listen to EPUB and TXT with a system voice, or download the Supertonic 3 model for on-device narration</li>
                     </ul>
                 </div>
                 <div class="list-panel">
@@ -998,9 +1021,10 @@
                 <div class="list-panel">
                     <h3>Send your next read to Readive</h3>
                     <ul>
-                        <li>Pair and connect Readive devices on the same network</li>
-                        <li>Send selected books to your mobile device</li>
+                        <li>Choose your computer’s address on a shared local network or Tailscale network, then scan the QR code in Readive to pair</li>
+                        <li>Send selected books and folders from your computer to your mobile device</li>
                         <li>Browse and import books from your BookManager library in Readive</li>
+                        <li>Sync the reading position and reading status of linked books</li>
                     </ul>
                     <div class="actions">
                         <a class="button" href="../readive/en/">Explore Readive</a>
@@ -1013,7 +1037,7 @@
                         <li>Web: Browse your library in a web browser</li>
                         <li>WebDAV: Access book files in compatible apps</li>
                     </ul>
-                    <p class="note">Start sharing and transferring on the same network. Keep BookManager and the relevant sharing or connection service running while connected.</p>
+                    <p class="note">Keep BookManager and the sharing or connection service running on your computer while another device browses or receives books.</p>
                 </div>
             </div>
         </section>

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>BookManager - 만화책·전자책·오디오북 정리부터 감상까지</title>
-    <meta name="description" content="PC·외장하드·NAS의 만화책, EPUB, PDF, TXT와 오디오북을 한곳에서 관리하세요. 라이브러리·본문 단어 검색, 파일 일괄 정리, 메타데이터 편집, 내장 뷰어와 Readive 전송을 지원하는 Windows/macOS 무료 앱입니다.">
+    <meta name="description" content="BookManager는 Windows와 macOS용 무료 서재 관리 앱입니다. PC·외장하드·NAS의 책을 컬렉션으로 묶고, 만화 표지와 EPUB을 편집하거나 Readive로 보내 모바일에서 읽으세요.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dongkkase.github.io/BookManager/">
     <link rel="alternate" hreflang="ko" href="https://dongkkase.github.io/BookManager/">
@@ -12,12 +12,12 @@
     <link rel="alternate" hreflang="x-default" href="https://dongkkase.github.io/BookManager/">
     <meta property="og:type" content="website">
     <meta property="og:title" content="BookManager - 흩어진 책을 한곳에, 정리부터 감상까지">
-    <meta property="og:description" content="만화책·전자책·문서·오디오북을 나만의 서재로. 흩어진 파일을 찾고, 책 정보를 채우고, PC에서 읽거나 Readive로 전송하세요. Windows/macOS 무료 데스크톱 앱.">
+    <meta property="og:description" content="만화책·전자책·오디오북을 컬렉션으로 정리하고, 표지와 EPUB을 편집하세요. PC에서 읽고 듣거나 Readive로 책을 보낼 수 있습니다.">
     <meta property="og:url" content="https://dongkkase.github.io/BookManager/">
     <meta property="og:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="BookManager - 흩어진 책을 한곳에, 정리부터 감상까지">
-    <meta name="twitter:description" content="만화책·전자책·오디오북 검색과 일괄 정리부터 내장 뷰어, Readive 전송까지. Windows/macOS에서 나만의 서재를 관리하세요.">
+    <meta name="twitter:description" content="만화책·전자책·오디오북을 컬렉션으로 정리하고, 표지와 EPUB을 편집하세요. PC에서 읽고 듣거나 Readive로 책을 보낼 수 있습니다.">
     <meta name="twitter:image" content="https://raw.githubusercontent.com/dongkkase/BookManager/main/src/images/app-1024.png">
     <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
     <link rel="icon" type="image/x-icon" href="app.ico">
@@ -33,7 +33,7 @@
         "name": "BookManager",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows, macOS",
-        "description": "BookManager is a free, open-source Windows and macOS desktop app for managing local comics, ebooks, documents, and audiobooks. Search libraries and indexed text, organize archives in batches, edit metadata, read and listen with built-in viewers, and transfer files to Readive.",
+        "description": "BookManager는 Windows와 macOS용 무료 오픈소스 서재 관리 앱입니다. 만화책·전자책·문서·오디오북을 검색하고 컬렉션으로 묶거나, 표지와 EPUB을 편집하고 Readive로 책을 전송할 수 있습니다.",
         "license": "https://github.com/dongkkase/BookManager/blob/main/LICENSE",
         "url": "https://dongkkase.github.io/BookManager/",
         "downloadUrl": "https://github.com/dongkkase/BookManager/releases/latest",
@@ -597,6 +597,10 @@
         }
 
         @media (max-width: 720px) {
+            section {
+                scroll-margin-top: 96px;
+            }
+
             .split {
                 grid-template-columns: minmax(0, 1fr);
             }
@@ -721,10 +725,10 @@
 <body>
     <nav class="site-top-nav" aria-label="프로젝트 소개 페이지">
         <a class="site-top-link" href="./" aria-current="page">BookManager</a>
+        <a class="site-top-link" href="readive/">Readive</a>
         <a class="site-top-link" href="#features">주요 기능</a>
         <a class="site-top-link" href="#guides">사용 가이드</a>
-        <a class="site-top-link" href="#start">시작하기</a>
-        <a class="site-top-link" href="readive/">Readive</a>
+        <a class="site-top-link" href="#start">다운로드</a>
         <a class="site-top-link" href="en/" lang="en" hreflang="en" aria-label="View this page in English">English</a>
     </nav>
     <header class="hero">
@@ -732,7 +736,7 @@
             <p class="eyebrow">만화책 · 전자책 · 문서 · 오디오북을 위한 나만의 서재</p>
             <h1 class="animated-title text-animate" aria-label="BookManager">BookManager</h1>
             <p class="hero-message">흩어진 책을 한곳에.<br>정리부터 감상까지.</p>
-            <p class="lead">PC, 외장하드, NAS에 모아 둔 책을 한곳에서 찾고 정리하세요. 표지와 책 정보를 채우고, 내장 뷰어로 읽고 듣고, Readive로 모바일에 전송할 수 있습니다.</p>
+            <p class="lead">PC, 외장하드, NAS에 있는 책을 한곳에서 찾으세요. 여러 폴더에 흩어진 시리즈도 컬렉션으로 묶어 둘 수 있습니다. 내장 뷰어로 바로 읽거나 Readive로 보내 휴대폰에서 펼쳐 보세요.</p>
             <div class="actions">
                 <a class="button primary download-button" href="https://github.com/dongkkase/BookManager/releases/latest" data-platform="mac" aria-label="macOS 최신 버전 다운로드">
                     <img class="button-icon" src="icon_apple.svg" alt="" aria-hidden="true">
@@ -758,16 +762,16 @@
 
     <main>
         <section id="features" aria-labelledby="features-title">
-            <h2 id="features-title">책이 쌓일수록, 관리가 쉬워지도록</h2>
-            <p class="section-lead">폴더를 오가며 찾고, 한 권씩 정보를 입력하던 일을 하나의 흐름으로 연결합니다.</p>
+            <h2 id="features-title">내 서재 정리와 독서</h2>
+            <p class="section-lead">책이 있는 폴더를 라이브러리로 등록하면 파일을 옮기지 않고도 읽을 목록을 만들고 빠진 권을 확인할 수 있습니다.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>어디에 뒀는지 몰라도 찾기</h3>
-                    <p>여러 드라이브의 라이브러리를 함께 검색하고, 중복 후보와 시리즈의 빠진 권수를 확인하세요.</p>
+                    <h3>다음에 읽을 책 고르기</h3>
+                    <p>‘읽고 싶은 책’에 다음 권을 담아 두세요. 시리즈나 주제별로 모으려면 책과 폴더를 선택해 컬렉션에 추가하세요.</p>
                 </article>
                 <article class="feature">
-                    <h3>반복되는 정리는 한 번에</h3>
-                    <p>압축 구조와 페이지 이름을 일괄 정리하고, 검색한 책 정보를 같은 시리즈에 함께 적용하세요.</p>
+                    <h3>시리즈 표지와 책 정보 정리</h3>
+                    <p>저자와 출판사는 여러 권에 함께 적용하고, 표지는 권마다 따로 고를 수 있습니다. 내 이미지나 책 속 페이지를 새 표지로 써 보세요.</p>
                 </article>
                 <article class="feature">
                     <h3>정리한 자리에서 바로 감상</h3>
@@ -921,8 +925,8 @@
         </section>
 
         <section aria-labelledby="organize-title">
-            <h2 id="organize-title" class="text-animate">반복되는 파일 정리, 여러 권을 한 번에</h2>
-            <p class="section-lead">여러 권이 한 압축 파일에 섞여 있거나 페이지 이름이 제각각이어도 괜찮습니다. 파일이나 폴더를 끌어다 놓고, 결과를 미리 확인한 뒤 일괄 정리하세요.</p>
+            <h2 id="organize-title" class="text-animate">합본 만화와 페이지 정리</h2>
+            <p class="section-lead">여러 권이 한 파일에 들어 있거나 페이지 이름이 뒤섞인 만화를 정리하세요. 파일이나 폴더를 끌어다 놓고, 바뀔 이름과 저장 위치를 확인한 뒤 실행합니다.</p>
             <div class="feature-grid">
                 <article class="feature">
                     <h3>합본을 권·화별 파일로</h3>
@@ -937,12 +941,31 @@
                     <p>내부 이미지 이름을 같은 규칙으로 바꾸고 순서를 조정합니다. 누락된 페이지 번호 확인과 이미지 용량 줄이기도 함께 처리할 수 있습니다.</p>
                 </article>
             </div>
-            <p class="note">변경 전후의 파일명과 작업 대상을 미리 확인할 수 있습니다. 원본을 함께 보관하려면 작업 전에 환경 설정의 ‘원본 백업’을 켜세요.</p>
+            <p class="note">원본 만화 파일을 함께 보관하려면 작업 전에 환경 설정의 ‘원본 백업’을 켜세요.</p>
+        </section>
+
+        <section aria-labelledby="ebook-tools-title">
+            <h2 id="ebook-tools-title" class="text-animate">TXT와 EPUB 편집</h2>
+            <p class="section-lead">파일 도구에서 읽기 불편한 줄바꿈을 정리하거나, 직접 쓴 글에 목차와 표지를 더해 전자책으로 만들 수 있습니다.</p>
+            <div class="feature-grid">
+                <article class="feature">
+                    <h3>텍본 정리기</h3>
+                    <p>문장 중간에 끊긴 줄을 잇고 불필요한 공백을 정리합니다. 원본과 결과를 나란히 보며 문단을 직접 고칠 수 있습니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>EPUB 에디터</h3>
+                    <p>새 책을 만들거나 기존 EPUB을 불러와 장 순서, 본문과 표지를 편집하세요. 읽기 화면을 미리 본 뒤 EPUB 3 파일로 내보낼 수 있습니다.</p>
+                </article>
+                <article class="feature">
+                    <h3>EPUB 용량 최적화</h3>
+                    <p>책 안에서 어떤 이미지와 글꼴이 용량을 많이 차지하는지 확인하세요. 이미지 품질과 크기를 조절하고 사용하지 않는 자료를 골라 삭제할 수 있습니다.</p>
+                </article>
+            </div>
         </section>
 
         <section aria-labelledby="metadata-title">
             <h2 id="metadata-title" class="text-animate">파일명만 있던 책에, 표지와 이야기를</h2>
-            <p class="section-lead">리디북스, Google Books, AniList, Comic Vine, Amazon 등에서 책 정보를 찾아 비교하세요. 표지, 제목, 작가, 출판사와 줄거리를 가져와 알아보기 쉬운 서재로 정리할 수 있습니다.</p>
+            <p class="section-lead">한국웹툰에서 만화 정보를, Audible에서 오디오북 정보를 찾아보세요. 리디북스, Google Books 등에서도 표지·작가·줄거리를 검색해 내 책에 적용할 수 있습니다.</p>
             <div class="feature-grid">
                 <article class="feature">
                     <h3>검색해서 채우는 책 정보</h3>
@@ -967,10 +990,10 @@
                 <div class="list-panel">
                     <h3>내게 맞는 독서 화면</h3>
                     <ul>
-                        <li>한 장·두 장 보기, 스크롤과 확대·축소</li>
+                        <li>자동 보기에서 창 크기에 맞춰 한 장 또는 두 장으로 읽고, 세로로 긴 웹툰은 스크롤로 보기</li>
                         <li>테마와 페이지 전환 효과로 읽기 환경 조정</li>
                         <li>EPUB, PDF, TXT 안에서 내용 검색과 해당 위치로 이동</li>
-                        <li>EPUB과 TXT의 본문을 TTS로 듣기</li>
+                        <li>EPUB과 TXT를 시스템 음성으로 듣거나, Supertonic 3 모델을 내려받아 기기에서 낭독하기</li>
                     </ul>
                 </div>
                 <div class="list-panel">
@@ -992,9 +1015,10 @@
                 <div class="list-panel">
                     <h3>모바일에서 읽을 책은 Readive로</h3>
                     <ul>
-                        <li>같은 네트워크의 Readive 기기를 등록하고 연결</li>
-                        <li>선택한 책을 모바일 기기에 전송</li>
+                        <li>같은 로컬 네트워크나 Tailscale 네트워크에서 PC 주소를 선택하고 Readive로 QR 코드를 스캔해 연결</li>
+                        <li>PC에서 선택한 책과 폴더를 모바일 기기에 전송</li>
                         <li>Readive에서 BookManager 라이브러리를 탐색하고 가져오기</li>
+                        <li>연동한 책의 읽던 위치와 읽기 상태 동기화</li>
                     </ul>
                     <div class="actions">
                         <a class="button" href="readive/">Readive 알아보기</a>
@@ -1007,7 +1031,7 @@
                         <li>Web: 웹 브라우저에서 라이브러리 탐색</li>
                         <li>WebDAV: 지원하는 앱에서 책 파일에 접근</li>
                     </ul>
-                    <p class="note">공유와 전송은 같은 네트워크에서 시작하세요. 연결하는 동안 BookManager와 해당 공유·연결 서비스가 실행 중이어야 합니다.</p>
+                    <p class="note">다른 기기에서 책을 탐색하거나 전송받는 동안 PC의 BookManager와 사용하는 공유·연동 서비스를 켜 두세요.</p>
                 </div>
             </div>
         </section>

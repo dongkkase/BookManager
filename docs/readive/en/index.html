@@ -3,23 +3,25 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Readive - Read and listen to your comics, ebooks and audiobooks</title>
-    <meta name="description" content="Bring your comics, EPUB, PDF, TXT and audiobooks into Readive. A mobile reader with NAS and cloud connections, offline reading, customizable views, text-to-speech, playback progress and reading history.">
+    <title>Readive – Comic, ebook and audiobook reader</title>
+    <meta name="description" content="Read comics, ebooks and audiobooks from your device or NAS. Scroll through webtoons, listen to EPUB and TXT, and revisit your books on a reading calendar.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dongkkase.github.io/BookManager/readive/en/">
     <link rel="alternate" hreflang="ko" href="https://dongkkase.github.io/BookManager/readive/">
     <link rel="alternate" hreflang="en" href="https://dongkkase.github.io/BookManager/readive/en/">
     <link rel="alternate" hreflang="x-default" href="https://dongkkase.github.io/BookManager/readive/">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Readive - Your books, your way to read and listen">
-    <meta property="og:description" content="Keep comics, ebooks and audiobooks in your mobile library. Import books from your device, NAS or cloud storage, read and listen, and build your reading history.">
+    <meta property="og:title" content="Readive – Comic, ebook and audiobook reader">
+    <meta property="og:description" content="Read comics, ebooks and audiobooks from your device or NAS. Scroll through webtoons, listen to EPUB and TXT, and revisit your books on a reading calendar.">
     <meta property="og:url" content="https://dongkkase.github.io/BookManager/readive/en/">
-    <meta property="og:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
-    <meta property="og:image:alt" content="Readive app icon">
-    <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="Readive - Your books, your way to read and listen">
-    <meta name="twitter:description" content="A mobile library for your own files. Enjoy comics, ebooks and audiobooks with customizable views, offline reading and reading history in one app.">
-    <meta name="twitter:image" content="https://dongkkase.github.io/BookManager/readive/app.png">
+    <meta property="og:image" content="https://dongkkase.github.io/BookManager/readive/screenshots/en/overview.webp">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="800">
+    <meta property="og:image:alt" content="An ebook page, a comic and an audiobook open side by side in Readive">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Readive – Comic, ebook and audiobook reader">
+    <meta name="twitter:description" content="Read comics, ebooks and audiobooks from your device or NAS. Scroll through webtoons, listen to EPUB and TXT, and revisit your books on a reading calendar.">
+    <meta name="twitter:image" content="https://dongkkase.github.io/BookManager/readive/screenshots/en/overview.webp">
     <meta name="google-site-verification" content="BShb_UilpkZWFODyIwqkR_yTxuZsxWCVNburEvD3D1E" />
     <script type="application/ld+json">
     {
@@ -29,20 +31,20 @@
         "name": "Readive",
         "alternateName": "리디브",
         "url": "https://dongkkase.github.io/BookManager/readive/en/",
-        "description": "A mobile reader for comics, ebooks, documents and audiobooks from your device, NAS and cloud storage. Core features are free, with an optional Premium subscription.",
+        "description": "Read comics, ebooks and audiobooks from your device or NAS. Scroll through webtoons, listen to EPUB and TXT, and revisit your books on a reading calendar.",
         "applicationCategory": "ReferenceApplication",
-        "operatingSystem": [
-            "iOS",
-            "iPadOS"
-        ],
+        "operatingSystem": ["iOS", "iPadOS", "Android"],
         "image": "https://dongkkase.github.io/BookManager/readive/app.png",
-        "downloadUrl": "https://apps.apple.com/app/apple-store/id6796676237?pt=822806&ct=bookmanager&mt=8",
-        "sameAs": "https://apps.apple.com/app/apple-store/id6796676237?pt=822806&ct=bookmanager&mt=8",
+        "screenshot": "https://dongkkase.github.io/BookManager/readive/screenshots/en/overview.webp",
+        "downloadUrl": [
+            "https://apps.apple.com/app/apple-store/id6796676237?pt=822806&ct=bookmanager&mt=8",
+            "https://play.google.com/store/apps/details?id=com.devmore.readive"
+        ],
         "offers": {
             "@type": "Offer",
             "price": "0",
             "priceCurrency": "KRW",
-            "description": "Free download with an optional Premium in-app subscription",
+            "description": "Free download with optional in-app purchases for Premium",
             "url": "https://apps.apple.com/app/apple-store/id6796676237?pt=822806&ct=bookmanager&mt=8"
         }
     }
@@ -52,6 +54,8 @@
     <link rel="icon" type="image/png" sizes="16x16" href="../app.png">
     <link rel="apple-touch-icon" href="../app.png">
     <script>document.documentElement.classList.add('js');</script>
+    <link rel="stylesheet" href="../device-gallery.css">
+    <script defer src="../device-gallery.js"></script>
     <style>
         :root {
             color-scheme: dark;
@@ -122,175 +126,103 @@
         }
 
         .hero {
-            min-height: 60vh;
-            display: grid;
-            align-items: end;
-            padding: 96px clamp(20px, 6vw, 72px) 72px;
-            position: relative;
-            overflow: hidden;
+            padding: 104px clamp(20px, 6vw, 72px) 64px;
             border-bottom: 1px solid var(--line);
-            z-index: 1; /* 콘텐츠를 가상 요소 위에 유지 */
-            background-color: var(--bg); /* 기본 배경색 */
+            background: linear-gradient(120deg, #101820, #101214 65%);
         }
 
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: -10%;
-            left: -10%;
-            width: 120%;
-            height: 120%;
-            background:
-                linear-gradient(90deg, rgba(10, 12, 13, 0.96) 0%, rgba(10, 12, 13, 0.84) 38%, rgba(10, 12, 13, 0.46) 68%, rgba(10, 12, 13, 0.68) 100%),
-                linear-gradient(180deg, rgba(10, 12, 13, 0.16) 0%, rgba(10, 12, 13, 0.66) 72%, rgba(10, 12, 13, 0.96) 100%),
-                url("../../bg.webp"),
-                #101214;
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            z-index: -1;
-
-            /* 이동 속도는 60초, 블러 속도는 10초로 별개 지정 */
-            animation:
-                moveHeroBg 60s ease-in-out infinite alternate,
-                blurHeroBg 4s ease-in-out infinite alternate;
+        .hero-layout {
+            max-width: 1240px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1.06fr);
+            grid-template-areas: "intro artwork" "extras artwork";
+            align-items: center;
+            column-gap: clamp(28px, 4vw, 64px);
         }
 
         .hero-inner {
-            max-width: 900px;
-            position: relative;
-            text-shadow: 0 2px 18px rgba(0, 0, 0, 0.34);
+            grid-area: intro;
         }
 
-        .hero-media {
-            position: relative;
-            max-width: 360px;
+        .hero-extra {
+            grid-area: extras;
+        }
+
+        .hero-artwork {
+            grid-area: artwork;
+            display: block;
             width: 100%;
-            margin: 0 auto;
-            border-radius: 0;
-            overflow: hidden;
-            border: none;
-            aspect-ratio: 9 / 16;
-            background: #0b0d0f;
-            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
+            height: auto;
+            border: 1px solid var(--line);
+            border-radius: 12px;
         }
 
         .hero-preview {
-            position: relative;
-            isolation: isolate;
-            max-width: none;
-            margin: 0 calc(-1 * clamp(20px, 6vw, 72px));
-            width: auto;
+            padding: clamp(10px, 2vw, 24px);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: #101820;
+        }
+
+        .hero-media {
+            width: min(100%, 920px);
+            margin: 0 auto;
+        }
+
+        .hero-frames {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
             overflow: hidden;
-        }
-
-        .hero-preview-bg {
-            position: absolute;
-            inset: 0;
-            z-index: 0;
-            pointer-events: none;
-            overflow: hidden;
-            background: #101214;
-        }
-
-        .hero-preview-bg-layer {
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            height: 100%;
-            display: block;
-            object-fit: cover;
-            opacity: 1;
-            transition: opacity 1s ease;
-            filter: blur(25px);
-            transform: scale(1.08);
-            will-change: opacity;
-            pointer-events: none;
-        }
-
-        .hero-preview-bg-layer.is-fade {
-            opacity: 0;
-        }
-
-        .hero-preview-bg-layer.is-fade.is-active {
-            opacity: 1;
-        }
-
-        .hero-preview > .hero-media {
-            position: relative;
-            z-index: 1;
-        }
-
-        .hero-preview .hero-media {
-            max-width: min(100%, var(--hero-preview-max-width, 1376px));
-            width: 100%;
-            border-radius: 0;
-            border: none;
-            aspect-ratio: var(--hero-preview-aspect-ratio, 16 / 9);
+            border-radius: 6px;
         }
 
         .hero-slide {
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            grid-area: 1 / 1;
             opacity: 0;
-            transition: opacity 1s ease;
+            transition: opacity 0.45s ease;
             pointer-events: none;
         }
 
         .hero-slide.is-active {
             opacity: 1;
-            pointer-events: auto;
+        }
+
+        .hero-slide img {
+            display: block;
+            width: 100%;
+            height: auto;
         }
 
         .hero-media-controls {
-            position: absolute;
-            inset: 0;
-            display: block;
+            display: none;
+            justify-content: center;
             align-items: center;
-            pointer-events: none;
+            gap: 16px;
+            margin-top: 12px;
+        }
+
+        .js .hero-media-controls {
+            display: flex;
         }
 
         .hero-slide-nav,
         .hero-slide-dot {
-            border: 0;
-            margin: 0;
+            display: grid;
+            place-items: center;
             padding: 0;
-            color: var(--text);
             cursor: pointer;
-            pointer-events: auto;
         }
 
         .hero-slide-nav {
-            width: 68px;
-            height: 68px;
-            position: absolute;
-            top: 50%;
-            transform: translateY(-50%);
-            border-radius: 999px;
-            background: rgba(16, 18, 20, 0.84);
-            border: 1px solid rgba(238, 243, 247, 0.3);
-            font-size: 2.16rem;
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--line);
+            border-radius: 50%;
+            background: var(--panel);
+            color: var(--text);
+            font-size: 1.6rem;
             line-height: 1;
-            font-weight: 700;
-        }
-
-        .hero-slide-nav[data-hero-prev] {
-            left: 12px;
-        }
-
-        .hero-slide-nav[data-hero-next] {
-            right: 12px;
-        }
-
-        .hero-slide-nav:hover,
-        .hero-slide-nav:focus-visible,
-        .hero-slide-dot:hover,
-        .hero-slide-dot:focus-visible {
-            border-color: var(--accent);
-            outline: none;
         }
 
         .hero-slide-nav:hover,
@@ -299,27 +231,27 @@
         }
 
         .hero-slide-dots {
-            position: absolute;
-            left: 50%;
-            bottom: 12px;
-            transform: translateX(-50%);
             display: flex;
-            gap: 8px;
-            align-items: center;
         }
 
         .hero-slide-dot {
+            width: 24px;
+            height: 36px;
+            border: 0;
+            background: transparent;
+        }
+
+        .hero-slide-dot::before {
+            content: "";
             width: 8px;
             height: 8px;
             border-radius: 999px;
-            background: rgba(238, 243, 247, 0.45);
-            border: 1px solid transparent;
+            background: var(--muted);
         }
 
-        .hero-slide-dot.is-active {
-            width: 20px;
+        .hero-slide-dot.is-active::before {
+            width: 18px;
             background: var(--accent);
-            border-color: var(--accent);
         }
 
         .eyebrow {
@@ -439,9 +371,6 @@
             font-size: 1.05rem;
         }
 
-        .preview-section {
-            max-width: none;
-        }
 
         .preview-header,
         .preview-caption {
@@ -468,11 +397,15 @@
         }
 
         .preview-playback {
-            display: flex;
+            display: none;
             flex: 0 0 auto;
             align-items: center;
             gap: 12px;
             color: var(--muted);
+        }
+
+        .js .preview-playback {
+            display: flex;
         }
 
         .preview-pause {
@@ -626,14 +559,21 @@
             }
 
             .hero {
-                min-height: 76vh;
-                padding-top: 96px;
+                padding-bottom: 40px;
             }
 
-            .hero-media {
-                max-width: 100%;
-                width: 100%;
-                margin-top: 0;
+            .hero-layout {
+                grid-template-columns: minmax(0, 1fr);
+                grid-template-areas: "intro" "artwork" "extras";
+            }
+
+            .hero-artwork {
+                max-width: 560px;
+                margin: 22px auto 0;
+            }
+
+            .hero-media-controls {
+                gap: 4px;
             }
 
             .button {
@@ -649,28 +589,10 @@
                 flex-direction: column;
                 gap: 14px;
             }
-
-            .hero-slide-nav {
-                width: 36px;
-                height: 36px;
-                font-size: 1.6rem;
-            }
-
-            .hero-slide-dots {
-                bottom: 8px;
-                padding: 8px;
-                border-radius: 999px;
-                background: rgba(16, 18, 20, 0.84);
-            }
         }
 
         @media (prefers-reduced-motion: reduce) {
-            .hero::before {
-                animation: none;
-            }
-
-            .hero-slide,
-            .hero-preview-bg-layer {
+            .hero-slide {
                 transition: none;
             }
         }
@@ -687,53 +609,143 @@
     </nav>
 
     <header class="hero">
-        <div class="hero-inner">
-            <p class="eyebrow">Your mobile library for comics, ebooks, documents and audiobooks</p>
-            <h1>Readive</h1>
-            <p class="hero-message">Your books.<br>Your way to read and listen.</p>
-            <p class="lead">
-                Bring books from your device, NAS and cloud storage into a library you can take anywhere. Enjoy views tailored to comics and text, resume audiobooks and keep track of your reading in one app.
-            </p>
-            <div class="actions">
-                <a class="button primary" href="https://apps.apple.com/app/apple-store/id6796676237?pt=822806&ct=bookmanager&mt=8" target="_blank" rel="noopener noreferrer" aria-label="Download Readive for iPhone and iPad on the App Store">
-                    <img class="button-icon" src="../../icon_apple.svg" alt="" aria-hidden="true">
-                    Download for iPhone and iPad
-                </a>
-                <a class="button primary"
-                    href="https://play.google.com/store/apps/details?id=com.devmore.readive&amp;referrer=utm_source%3Dbookmanager%26utm_medium%3Dreferral%26utm_campaign%3Dbookmanager"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Download Readive for Android on Google Play">
-                    <img class="button-icon" src="../../icon_googleplay.svg" alt="" aria-hidden="true">
-                    Download for Android
-                </a>
-                <a class="button" href="#preview">Explore the app</a>
+        <div class="hero-layout">
+            <div class="hero-inner">
+                <p class="eyebrow">iPhone · iPad · Android</p>
+                <h1>Readive</h1>
+                <p class="hero-message">Comics, ebooks and audiobooks in one library</p>
+                <p class="lead">Bring books from your device or NAS. Read a comic in a two-page spread, or listen to an ebook starting at the passage you last read.</p>
             </div>
-            <div class="support-badges" aria-label="Pricing model and supported languages">
-                <span class="support-badge">Free to start · Optional Premium</span>
-                <span class="support-badge">Saved books work offline</span>
-                <span class="support-badge">10 languages, including Korean</span>
+            <img class="hero-artwork" src="../screenshots/en/overview.webp" width="1200" height="800" alt="An ebook page, a comic and an audiobook open side by side in Readive" fetchpriority="high">
+            <div class="hero-extra">
+                <div class="actions">
+                    <a class="button primary" href="https://apps.apple.com/app/apple-store/id6796676237?pt=822806&ct=bookmanager&mt=8" target="_blank" rel="noopener noreferrer" aria-label="Download Readive for iPhone and iPad on the App Store">
+                        <img class="button-icon" src="../../icon_apple.svg" alt="" aria-hidden="true">
+                        Download for iPhone and iPad
+                    </a>
+                    <a class="button primary"
+                        href="https://play.google.com/store/apps/details?id=com.devmore.readive&amp;referrer=utm_source%3Dbookmanager%26utm_medium%3Dreferral%26utm_campaign%3Dbookmanager"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Download Readive for Android on Google Play">
+                        <img class="button-icon" src="../../icon_googleplay.svg" alt="" aria-hidden="true">
+                        Download for Android
+                    </a>
+                    <a class="button" href="#preview">Explore the app</a>
+                </div>
+                <div class="support-badges" aria-label="Pricing model and supported languages">
+                    <span class="support-badge">Free to start · Optional Premium</span>
+                    <span class="support-badge">Saved books work offline</span>
+                    <span class="support-badge">10 languages, including Korean</span>
+                </div>
             </div>
         </div>
     </header>
 
     <main>
         <section id="features" aria-labelledby="features-title">
-            <h2 id="features-title">Your books, ready when you are</h2>
-            <p class="section-lead">Read on your phone during your commute or on your tablet at home. Bring your own books and keep your reading and listening together.</p>
+            <h2 id="features-title">Find a book or pick up where you left off</h2>
+            <p class="section-lead">Books saved on your device work offline. Open a recent title from Now Reading, or choose your next book from the library.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>Books from different places, one library</h3>
+                    <h3>Local and remote libraries</h3>
                     <p>Import books from your device, NAS and cloud storage, then search by title and book details. Group your next reads into collections.</p>
                 </article>
                 <article class="feature">
-                    <h3>A view for every book and preference</h3>
-                    <p>Enjoy comics in a two-page spread, adjust text and margins for ebooks, and listen to audiobooks at your preferred speed.</p>
+                    <h3>From webtoons to audiobooks</h3>
+                    <p>Read comics in two-page spreads and scroll through vertical webtoons. Switch on text-to-speech for EPUB or TXT, or resume an audiobook where you left off.</p>
                 </article>
                 <article class="feature">
-                    <h3>Pick up where you left off</h3>
-                    <p>Save your reading and playback positions, and return through bookmarks and reading history. Books saved on your device are available offline.</p>
+                    <h3>Today’s pick · Experimental</h3>
+                    <p>When you’re looking for something to read, try Today’s pick. It chooses an unread standalone book or an unread first volume from a series on your device.</p>
                 </article>
+            </div>
+        </section>
+
+        <section id="preview" class="preview-section" aria-labelledby="preview-title">
+            <div class="preview-header">
+                <h2 id="preview-title">Inside Readive</h2>
+                <p class="section-lead">Choose a device to compare the same seven screens on a phone, tablet or foldable.</p>
+            </div>
+            <div class="hero-preview" data-device-view="phone">
+                <div class="device-tabs" role="tablist" aria-label="Preview device" hidden>
+                    <button type="button" role="tab" id="tab-phone" data-device="phone" aria-selected="true" aria-controls="device-preview">Phone</button>
+                    <button type="button" role="tab" id="tab-tablet" data-device="tablet" aria-selected="false" aria-controls="device-preview" tabindex="-1">Tablet</button>
+                    <button type="button" role="tab" id="tab-fold" data-device="fold" aria-selected="false" aria-controls="device-preview" tabindex="-1">Foldable</button>
+                </div>
+                <div class="hero-media" id="device-preview" role="tabpanel" aria-labelledby="tab-phone" tabindex="0">
+                    <div class="fold-options" role="group" aria-label="Foldable display" hidden>
+                        <button type="button" data-fold-view="unfolded" aria-pressed="true">Unfolded</button>
+                        <button type="button" data-fold-view="folded" aria-pressed="false">Folded</button>
+                    </div>
+                    <div class="hero-frames">
+                        <picture class="hero-slide is-active" data-hero-slide data-title="Now Reading" data-description="Choose a recent book in Continue Reading to open it where you left off." aria-hidden="false">
+                            <source data-view="tablet" media="not all" srcset="../screenshots/en/tablet/01-home.webp" width="1440" height="1080">
+                            <source data-view="unfolded" media="not all" srcset="../screenshots/en/01-home.webp" width="1426" height="1003">
+                            <source data-view="folded" media="not all" srcset="../screenshots/en/01-home-mobile.webp" width="699" height="1017">
+                            <img src="../screenshots/en/phone/01-home.webp" width="720" height="1564" alt="Continue Reading and the on-device book collection in Readive" loading="lazy">
+                        </picture>
+                        <picture class="hero-slide" data-hero-slide data-title="Comic reader" data-description="Turn pages for print-style comics, or scroll down through a vertical webtoon." aria-hidden="true">
+                            <source data-view="tablet" media="not all" srcset="../screenshots/en/tablet/02-comics.webp" width="1440" height="1080">
+                            <source data-view="unfolded" media="not all" srcset="../screenshots/en/02-comics.webp" width="1426" height="1003">
+                            <source data-view="folded" media="not all" srcset="../screenshots/en/02-comics-mobile.webp" width="699" height="1017">
+                            <img src="../screenshots/en/phone/02-comics.webp" width="720" height="1564" alt="A comic book open in Readive with page controls" loading="lazy">
+                        </picture>
+                        <picture class="hero-slide" data-hero-slide data-title="Ebook reader" data-description="Adjust EPUB type size, line spacing and margins to fit your screen." aria-hidden="true">
+                            <source data-view="tablet" media="not all" srcset="../screenshots/en/tablet/03-ebooks.webp" width="1440" height="1080">
+                            <source data-view="unfolded" media="not all" srcset="../screenshots/en/03-ebooks.webp" width="1426" height="1003">
+                            <source data-view="folded" media="not all" srcset="../screenshots/en/03-ebooks-mobile.webp" width="699" height="1017">
+                            <img src="../screenshots/en/phone/03-ebooks.webp" width="720" height="1564" alt="An EPUB in Readive with a warm paper-colored reading background" loading="lazy">
+                        </picture>
+                        <picture class="hero-slide" data-hero-slide data-title="Library" data-description="Choose a book by its cover or search by title and filename." aria-hidden="true">
+                            <source data-view="tablet" media="not all" srcset="../screenshots/en/tablet/04-library.webp" width="1440" height="1080">
+                            <source data-view="unfolded" media="not all" srcset="../screenshots/en/04-library.webp" width="1426" height="1003">
+                            <source data-view="folded" media="not all" srcset="../screenshots/en/04-library-mobile.webp" width="699" height="1017">
+                            <img src="../screenshots/en/phone/04-library.webp" width="720" height="1564" alt="Personal book files arranged in Readive&#x27;s cover-grid library" loading="lazy">
+                        </picture>
+                        <picture class="hero-slide" data-hero-slide data-title="Immersive read-aloud mode" data-description="Follow the highlighted passage as Readive reads an EPUB or TXT file aloud." aria-hidden="true">
+                            <source data-view="tablet" media="not all" srcset="../screenshots/en/tablet/05-read-aloud.webp" width="1440" height="1080">
+                            <source data-view="unfolded" media="not all" srcset="../screenshots/en/05-read-aloud.webp" width="1426" height="1003">
+                            <source data-view="folded" media="not all" srcset="../screenshots/en/05-read-aloud-mobile.webp" width="699" height="1017">
+                            <img src="../screenshots/en/phone/05-read-aloud.webp" width="720" height="1564" alt="Readive&#x27;s text-to-speech focus mode highlights the current passage" loading="lazy">
+                        </picture>
+                        <picture class="hero-slide" data-hero-slide data-title="Audiobook player" data-description="Resume from your last listening position, adjust the speed or set a sleep timer." aria-hidden="true">
+                            <source data-view="tablet" media="not all" srcset="../screenshots/en/tablet/06-audiobooks.webp" width="1440" height="1080">
+                            <source data-view="unfolded" media="not all" srcset="../screenshots/en/06-audiobooks.webp" width="1426" height="1003">
+                            <source data-view="folded" media="not all" srcset="../screenshots/en/06-audiobooks-mobile.webp" width="699" height="1017">
+                            <img src="../screenshots/en/phone/06-audiobooks.webp" width="720" height="1564" alt="Readive&#x27;s audiobook player with cover, progress, speed and sleep controls" loading="lazy">
+                        </picture>
+                        <picture class="hero-slide" data-hero-slide data-title="Reading calendar" data-description="Choose a date to see what you read and how much time you spent reading." aria-hidden="true">
+                            <source data-view="tablet" media="not all" srcset="../screenshots/en/tablet/07-calendar.webp" width="1440" height="1080">
+                            <source data-view="unfolded" media="not all" srcset="../screenshots/en/07-calendar.webp" width="1426" height="1003">
+                            <source data-view="folded" media="not all" srcset="../screenshots/en/07-calendar-mobile.webp" width="699" height="1017">
+                            <img src="../screenshots/en/phone/07-calendar.webp" width="720" height="1564" alt="Readive&#x27;s reading calendar displays book covers on each reading day" loading="lazy">
+                        </picture>
+                    </div>
+                    <div class="hero-media-controls">
+                        <button class="hero-slide-nav" type="button" data-hero-prev aria-label="Previous screenshot">‹</button>
+                        <div class="hero-slide-dots" aria-label="Choose a screenshot">
+                            <button class="hero-slide-dot is-active" type="button" data-hero-dot data-hero-index="0" aria-label="Show now reading" aria-current="true"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="1" aria-label="Show comic reader" aria-current="false"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="2" aria-label="Show ebook reader" aria-current="false"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="3" aria-label="Show library" aria-current="false"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="4" aria-label="Show immersive read-aloud mode" aria-current="false"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="5" aria-label="Show audiobook player" aria-current="false"></button>
+                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="6" aria-label="Show reading calendar" aria-current="false"></button>
+                        </div>
+                        <button class="hero-slide-nav" type="button" data-hero-next aria-label="Next screenshot">›</button>
+                    </div>
+                </div>
+            </div>
+            <div class="preview-caption">
+                <div>
+                    <h3 data-hero-caption-title>Now Reading</h3>
+                    <p data-hero-caption-description>Choose a recent book in Continue Reading to open it where you left off.</p>
+                </div>
+                <div class="preview-playback">
+                    <span data-hero-count>1 / 7</span>
+                    <button class="preview-pause" type="button" data-hero-pause>Pause slideshow</button>
+                </div>
             </div>
         </section>
 
@@ -756,81 +768,38 @@
             </div>
         </section>
 
-        <section id="preview" class="preview-section" aria-labelledby="preview-title">
-            <div class="preview-header">
-                <h2 id="preview-title">Take a look inside your mobile library</h2>
-                <p class="section-lead">Explore the home screen, library, comic and ebook readers, audiobook player and reading statistics. Screenshots show the Korean interface.</p>
-            </div>
-            <div class="hero-preview">
-                <div class="hero-preview-bg" aria-hidden="true">
-                    <img class="hero-preview-bg-layer" src="../01-home-res.png" alt="" aria-hidden="true" data-hero-bg-current>
-                    <img class="hero-preview-bg-layer is-fade" src="../01-home-res.png" alt="" aria-hidden="true" data-hero-bg-fade>
-                </div>
-                <div class="hero-media" aria-label="Readive screenshots">
-                    <img class="hero-slide is-active" src="../01-home-res.png" alt="Readive home screen on a phone and tablet" width="1376" height="768" data-hero-slide data-title="Return to your latest read or listen" data-description="Open recent books and audiobooks from Continue Reading on the home screen." aria-hidden="false">
-                    <img class="hero-slide" src="../02-library-res.png" alt="Readive library and book search" width="1376" height="768" data-hero-slide data-title="Find books in a growing library" data-description="Search by title, filename and book details, and browse your library with covers or lists." aria-hidden="true" loading="lazy">
-                    <img class="hero-slide" src="../03-image-reader-res.png" alt="Readive comic reader" width="1376" height="768" data-hero-slide data-title="Focus on the art and the story" data-description="Adjust single-page, two-page and scrolling views, along with reading direction, to suit the book and your screen." aria-hidden="true" loading="lazy">
-                    <img class="hero-slide" src="../04-text-reader-res.png" alt="Readive EPUB and TXT reader" width="1376" height="768" data-hero-slide data-title="Text and margins that suit your eyes" data-description="Adjust font size, line spacing and margins for comfortable reading. Additional fonts are available with Premium." aria-hidden="true" loading="lazy">
-                    <img class="hero-slide" src="../05-audio-res.png" alt="Readive audiobook player" width="1376" height="768" data-hero-slide data-title="Keep the story going while your eyes rest" data-description="Adjust audiobook playback speed and use bookmarks and a sleep timer to manage your listening." aria-hidden="true" loading="lazy">
-                    <img class="hero-slide" src="../06-stats-res.png" alt="Readive basic reading statistics and Premium insights" width="1376" height="768" data-hero-slide data-title="See your reading time and history" data-description="Check this week&#x27;s reading and your reading streak. All-time, monthly and yearly insights are available with Premium." aria-hidden="true" loading="lazy">
-                    <div class="hero-media-controls">
-                        <button class="hero-slide-nav" type="button" data-hero-prev aria-label="Previous screenshot">‹</button>
-                        <div class="hero-slide-dots" aria-label="Choose a screenshot">
-                            <button class="hero-slide-dot is-active" type="button" data-hero-dot data-hero-index="0" aria-label="Show the home screen" aria-current="true"></button>
-                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="1" aria-label="Show the library" aria-current="false"></button>
-                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="2" aria-label="Show the comic reader" aria-current="false"></button>
-                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="3" aria-label="Show the ebook reader" aria-current="false"></button>
-                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="4" aria-label="Show the audiobook player" aria-current="false"></button>
-                            <button class="hero-slide-dot" type="button" data-hero-dot data-hero-index="5" aria-label="Show reading statistics" aria-current="false"></button>
-                        </div>
-                        <button class="hero-slide-nav" type="button" data-hero-next aria-label="Next screenshot">›</button>
-                    </div>
-                </div>
-            </div>
-            <div class="preview-caption">
-                <div>
-                    <h3 data-hero-caption-title>Return to your latest read or listen</h3>
-                    <p data-hero-caption-description>Open recent books and audiobooks from Continue Reading on the home screen.</p>
-                </div>
-                <div class="preview-playback">
-                    <span data-hero-count>1 / 6</span>
-                    <button class="preview-pause" type="button" data-hero-pause>Pause slideshow</button>
-                </div>
-            </div>
-        </section>
-
         <section aria-labelledby="sources-title">
-            <h2 id="sources-title">Wherever your books are, bring them together</h2>
+            <h2 id="sources-title">Import books from a device, computer or server</h2>
             <p class="section-lead">Choose files on your device or connect to the storage you already use. Download books in advance to enjoy them on the go without a network connection.</p>
             <div class="split">
                 <article class="list-panel">
                     <h3>Import from your device or computer</h3>
                     <ul>
-                        <li>Import books using your device&#x27;s file picker</li>
+                        <li>Choose a file on your device, or open an EPUB, PDF, TXT or comic file in Readive from another app</li>
                         <li>Upload to Readive from a computer&#x27;s web browser on the same network</li>
-                        <li>Choose a download location and track progress</li>
+                        <li>Copy books and folders from a Mac to an iPhone or iPad with Finder USB file sharing</li>
                         <li>Organize your reading with library search and collections</li>
                     </ul>
                 </article>
                 <article class="list-panel">
                     <h3>Connect to NAS, servers and cloud storage</h3>
                     <ul>
-                        <li>Browse shared folders over SMB, FTP and WebDAV</li>
-                        <li>Browse and import books from OPDS catalogs</li>
+                        <li>Browse shared folders over SMB, FTP, SFTP and WebDAV</li>
+                        <li>Browse and import books from OPDS catalogs such as Kavita and Komga</li>
                         <li>Connect to book files in Dropbox and OneDrive</li>
-                        <li>Open books from remote storage and download those you want to keep on your device</li>
+                        <li>Save comics from YACReader Library as CBZ files on your device</li>
                     </ul>
                 </article>
             </div>
         </section>
 
         <section aria-labelledby="reading-title">
-            <h2 id="reading-title">Room for the artwork, comfort for the text</h2>
+            <h2 id="reading-title">Reading comics, webtoons and ebooks</h2>
             <p class="section-lead">Choose a reading view for your book&#x27;s format and screen size. Adjust the experience for one-handed reading on a phone or two-page spreads on a tablet.</p>
             <div class="feature-grid">
                 <article class="feature">
-                    <h3>Views for comics and PDFs</h3>
-                    <p>Adjust single-page, two-page and scrolling views, reading direction and zoom. Fit pages to the screen or zoom in on the details.</p>
+                    <h3>Automatic view for comics and webtoons</h3>
+                    <p>Automatic view scrolls through vertical webtoons and fits other comics to your screen in single pages or spreads. Switch between the original page and a filter preview to compare them.</p>
                 </article>
                 <article class="feature">
                     <h3>Text and margins for EPUB and TXT</h3>
@@ -838,30 +807,31 @@
                 </article>
                 <article class="feature">
                     <h3>Mark passages to return to</h3>
-                    <p>Save your place with bookmarks. In EPUB and TXT, highlight passages or search the text to find what you need again.</p>
+                    <p>Highlight a passage in an EPUB or TXT file. In Highlights, filter by book, color or date and open a passage to return to its page.</p>
                 </article>
             </div>
         </section>
 
         <section aria-labelledby="audio-title">
-            <h2 id="audio-title">Rest your eyes, keep the story going</h2>
+            <h2 id="audio-title">Audiobook playback and text-to-speech</h2>
             <p class="section-lead">Switch to listening while traveling or doing something else. Play audiobooks or listen to EPUB and TXT with text-to-speech.</p>
             <div class="split">
                 <article class="list-panel">
-                    <h3>An audiobook player for everyday listening</h3>
+                    <h3>Audiobooks and CarPlay</h3>
                     <ul>
                         <li>Keep playing in the background with the screen locked or while using other apps</li>
                         <li>Adjust playback speed and skip intervals</li>
                         <li>Resume with saved playback positions and timestamped bookmarks</li>
                         <li>Set a sleep timer before bed</li>
+                        <li>On iPhone, browse audiobooks by folder or play EPUB and TXT narration in CarPlay</li>
                     </ul>
                 </article>
                 <article class="list-panel">
                     <h3>Let text-to-speech read your ebooks</h3>
                     <ul>
                         <li>Read EPUB and TXT aloud with your device&#x27;s built-in voices</li>
-                        <li>Choose a voice and reading speed for continuous listening</li>
-                        <li>Listen with Supertonic voices in Premium</li>
+                        <li>Follow the current passage in immersive mode and adjust the reading speed</li>
+                        <li>Use Premium’s Supertonic voices to distinguish dialogue from narration</li>
                         <li>Download a Supertonic model to generate speech offline on your device</li>
                     </ul>
                 </article>
@@ -869,7 +839,7 @@
         </section>
 
         <section aria-labelledby="records-title">
-            <h2 id="records-title">Return to your place and look back on your reading</h2>
+            <h2 id="records-title">Reading calendar and device sync</h2>
             <p class="section-lead">Even a short reading session adds to your history. Revisit recent books and bookmarks, and continue reading on other devices on the same platform.</p>
             <div class="feature-grid">
                 <article class="feature">
@@ -877,29 +847,29 @@
                     <p>Reopen recent books from the home screen and browse bookmarks saved in books and audiobooks.</p>
                 </article>
                 <article class="feature">
-                    <h3>Watch your reading history grow</h3>
-                    <p>Review this week&#x27;s reading time, books read and finished, and your reading streak to understand your habits.</p>
+                    <h3>See what you read on a given day</h3>
+                    <p>The calendar shows book covers on the days you read them. Select a date to see the titles and how long you spent reading.</p>
                 </article>
                 <article class="feature">
                     <h3>Continue on your phone or tablet</h3>
                     <p>Enable sync to share library information, reading positions, bookmarks and reading history across devices using the same account and platform.</p>
                 </article>
             </div>
-            <p class="note">iPhone and iPad use iCloud to sync reading data; Android devices use Google Drive. Sync between iOS and Android is not supported, and the original book files must be imported separately on each device.</p>
+            <p class="note">iPhone and iPad use iCloud to sync reading data. Android devices use Google Drive. Sync between iOS and Android is not supported, and the original book files must be imported separately on each device.</p>
         </section>
 
         <section aria-labelledby="bookmanager-title">
-            <p class="section-label">BookManager integration · Available since Readive 1.3.0</p>
+            <p class="section-label">BookManager integration</p>
             <h2 id="bookmanager-title">Bring your desktop library to Readive</h2>
             <p class="section-lead">Browse and import books you organized on your computer with BookManager. Connect book details and reading positions too.</p>
             <div class="split">
                 <article class="list-panel">
                     <h3>Connect with a QR code and choose your books</h3>
-                    <p>Connect to BookManager on the same network by scanning a QR code or entering the IP address and port. Approve the connection on your computer, then browse the shared library.</p>
+                    <p>With both devices on the same local or Tailscale network, scan the QR code in BookManager or enter your computer’s IP address and port. Approve the connection on your computer to browse the shared library.</p>
                 </article>
                 <article class="list-panel">
                     <h3>Import books and continue where you left off</h3>
-                    <p>Import files and folders from Readive, or review and accept books sent from your computer. Exchange reading positions and reading status for linked books.</p>
+                    <p>Import files and folders from Readive, or review and accept books sent from your computer. Sync reading positions, reading status and star ratings for linked books.</p>
                 </article>
             </div>
             <p class="note">Keep BookManager on your computer and Readive on your mobile device running while connected. Readive also works on its own with device files and remote storage.</p>
@@ -925,12 +895,12 @@
                     <p>MP3, M4A, M4B, FLAC and other audio files</p>
                 </article>
             </div>
-            <p class="note">Comic archives must be single-volume files without passwords. Reading and playback support may vary with the file&#x27;s structure and operating system.</p>
+            <p class="note">Readive supports single-volume comic archives. For password-protected ZIP, RAR and 7z files, enter the password when you open the book.</p>
         </section>
 
         <section aria-labelledby="premium-title">
-            <h2 id="premium-title">Start free, make it your own</h2>
-            <p class="section-lead">Start with the core reading and listening features. Choose Readive Premium for more customization, additional voices and detailed reading insights.</p>
+            <h2 id="premium-title">Free features and Readive Premium</h2>
+            <p class="section-lead">Importing books and reading or listening on your device is free. Premium adds more fonts and voices, along with detailed reading statistics.</p>
             <div class="split">
                 <article class="list-panel">
                     <h3>Included for free</h3>
@@ -945,21 +915,21 @@
                     <h3>Readive Premium</h3>
                     <ul>
                         <li>Remove in-app ads</li>
-                        <li>Additional themes and fonts, plus custom font imports</li>
+                        <li>Additional themes, including Dancheong Light and Dark, plus more fonts and custom font imports</li>
                         <li>Supertonic offline voice models</li>
                         <li>Detailed library views and more thumbnails on screen</li>
                         <li>All-time, monthly and yearly reading insights</li>
                     </ul>
                 </article>
             </div>
-            <p class="note">The free version may show ads. Check the Premium screen in the app and your app store for subscription options and pricing.</p>
+            <p class="note">Premium is available as a monthly or annual subscription or a lifetime purchase. Check the Premium screen in the app for available options and pricing.</p>
         </section>
 
         <section aria-labelledby="faq-title">
             <h2 id="faq-title">Before you get started</h2>
             <details class="faq-item">
-                <summary>Are books included?</summary>
-                <p>Readive is a reader for files you import. It does not provide books. Fill your library with books, documents and audio files you own or have permission to use.</p>
+                <summary>How can I start without a book file?</summary>
+                <p>Open Find on the web (Experimental) in the library to browse and download ebooks from Project Gutenberg and audiobooks from LibriVox. Check the source for each title’s terms of use.</p>
             </details>
             <details class="faq-item">
                 <summary>Do I need to sign up or use BookManager?</summary>
@@ -1015,27 +985,10 @@
         const heroCaptionTitle = document.querySelector('[data-hero-caption-title]');
         const heroCaptionDescription = document.querySelector('[data-hero-caption-description]');
         const heroCount = document.querySelector('[data-hero-count]');
-        const heroMedia = document.querySelector('.hero-preview .hero-media');
-        const heroBackgroundCurrent = document.querySelector('[data-hero-bg-current]');
-        const heroBackgroundFade = document.querySelector('[data-hero-bg-fade]');
-        let heroBackgroundFadeTimer = null;
-        const heroReferenceSlide = heroSlides[0];
+        const heroPreview = document.querySelector('.hero-preview');
         let heroSlideIndex = 0;
         let heroSlideTimer = null;
         let heroAutoPlayPaused = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-        function setHeroMediaSize() {
-            if (!heroMedia || !heroReferenceSlide) {
-                return;
-            }
-
-            const width = heroReferenceSlide.naturalWidth;
-            const height = heroReferenceSlide.naturalHeight;
-            if (width > 0 && height > 0) {
-                heroMedia.style.setProperty('--hero-preview-max-width', `${width}px`);
-                heroMedia.style.setProperty('--hero-preview-aspect-ratio', `${width} / ${height}`);
-            }
-        }
 
         function setHeroSlide(nextIndex) {
             if (heroSlides.length === 0) {
@@ -1062,43 +1015,7 @@
                 if (heroCaptionTitle) heroCaptionTitle.textContent = currentSlide.dataset.title;
                 if (heroCaptionDescription) heroCaptionDescription.textContent = currentSlide.dataset.description;
                 if (heroCount) heroCount.textContent = `${heroSlideIndex + 1} / ${heroSlides.length}`;
-                setHeroBackground(currentSlide.src);
             }
-        }
-
-        function setHeroBackground(src) {
-            if (!heroBackgroundCurrent || !heroBackgroundFade || !src) {
-                return;
-            }
-
-            if (heroBackgroundCurrent.src === src) {
-                return;
-            }
-
-            const image = new Image();
-            image.onload = () => {
-                if (heroBackgroundFadeTimer !== null) {
-                    clearTimeout(heroBackgroundFadeTimer);
-                }
-
-                heroBackgroundFade.src = src;
-                heroBackgroundFade.classList.add('is-fade');
-                requestAnimationFrame(() => {
-                    heroBackgroundFade.classList.add('is-active');
-                });
-
-                heroBackgroundFadeTimer = window.setTimeout(() => {
-                    heroBackgroundCurrent.src = src;
-                    heroBackgroundFade.classList.remove('is-active');
-                    heroBackgroundFadeTimer = null;
-                }, 1000);
-            };
-
-            image.onerror = () => {
-                heroBackgroundFade.classList.remove('is-active');
-            };
-
-            image.src = src;
         }
 
         function showNextHeroSlide() {
@@ -1108,7 +1025,7 @@
         function startHeroSlideAutoPlay() {
             stopHeroSlideAutoPlay();
             if (heroAutoPlayPaused || document.hidden || heroSlides.length < 2
-                || heroMedia?.matches(':hover') || heroMedia?.contains(document.activeElement)) {
+                || heroPreview?.matches(':hover') || heroPreview?.contains(document.activeElement)) {
                 return;
             }
             heroSlideTimer = window.setInterval(showNextHeroSlide, 5000);
@@ -1133,10 +1050,10 @@
             startHeroSlideAutoPlay();
         });
 
-        heroMedia?.addEventListener('pointerenter', stopHeroSlideAutoPlay);
-        heroMedia?.addEventListener('pointerleave', startHeroSlideAutoPlay);
-        heroMedia?.addEventListener('focusin', stopHeroSlideAutoPlay);
-        heroMedia?.addEventListener('focusout', () => requestAnimationFrame(startHeroSlideAutoPlay));
+        heroPreview?.addEventListener('pointerenter', stopHeroSlideAutoPlay);
+        heroPreview?.addEventListener('pointerleave', startHeroSlideAutoPlay);
+        heroPreview?.addEventListener('focusin', stopHeroSlideAutoPlay);
+        heroPreview?.addEventListener('focusout', () => requestAnimationFrame(startHeroSlideAutoPlay));
 
         heroPrevButton?.addEventListener('click', () => {
             setHeroSlide(heroSlideIndex - 1);
@@ -1161,16 +1078,8 @@
 
         if (heroSlides.length > 0) {
             updateHeroPauseButton();
-            setHeroMediaSize();
             setHeroSlide(0);
-            const initialSlide = heroSlides[0];
-            if (initialSlide) {
-                setHeroBackground(initialSlide.src);
-            }
             startHeroSlideAutoPlay();
-            if (heroReferenceSlide && !heroReferenceSlide.complete) {
-                heroReferenceSlide.addEventListener('load', setHeroMediaSize, { once: true });
-            }
 
             document.addEventListener('visibilitychange', () => {
                 if (document.hidden) {

@@ -1,0 +1,85 @@
+.device-tabs:not([hidden]) {
+    display: flex;
+    width: min(100%, 330px);
+    margin: 0 auto 18px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg);
+}
+
+.device-tabs button,
+.fold-options button {
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    cursor: pointer;
+}
+
+.device-tabs button {
+    flex: 1;
+    min-height: 40px;
+    font-weight: 700;
+}
+
+.device-tabs button[aria-selected="true"] {
+    color: #fff;
+    background: var(--accent-strong);
+}
+
+.fold-options:not([hidden]) {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.fold-options button {
+    min-height: 32px;
+    padding: 2px 12px;
+    border: 1px solid var(--line);
+    font-size: 0.88rem;
+}
+
+.fold-options button[aria-pressed="true"] {
+    border-color: var(--accent);
+    color: var(--text);
+    background: var(--panel-strong);
+}
+
+.device-tabs button:focus-visible,
+.fold-options button:focus-visible,
+.hero-media:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.hero-preview {
+    --screen-ratio: calc(720 / 1564);
+}
+
+.hero-preview[data-device-view="tablet"] {
+    --screen-ratio: calc(1440 / 1080);
+}
+
+.hero-preview[data-device-view="unfolded"] {
+    --screen-ratio: calc(1426 / 1003);
+}
+
+.hero-preview[data-device-view="folded"] {
+    --screen-ratio: calc(699 / 1017);
+}
+
+.hero-frames {
+    width: min(100%, calc(min(70vh, 680px) * var(--screen-ratio)));
+    margin: 0 auto;
+    aspect-ratio: var(--screen-ratio);
+    grid-template-rows: minmax(0, 1fr);
+}
+
+.hero-frames .hero-slide img {
+    height: 100%;
+    object-fit: contain;
+}
