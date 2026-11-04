@@ -1,4 +1,5 @@
-import React, { Children, cloneElement, forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import React, { Children, cloneElement, forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createEpubCurlCapture } from './viewerEpubCurlCapture';
 import { drawPageCurlFrame } from './viewerPageCurlRenderer';
 import { releasePageCurlSnapshots, snapshotPageCurlLeaves } from './viewerPageCurlSnapshot';
 import { useReducedMotion } from './hooks/useReducedMotion';
@@ -6,8 +7,8 @@ import { useReducedMotion } from './hooks/useReducedMotion';
 export const PAGE_CURL_SNAPSHOT_TIMEOUT = { reader: 3000, image: 800 };
 
 const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
-    children, startPage = 0, preparedPage = startPage, width, height, spread = true,
-    duration = 600, onPageChange, canStartDrag, onTurnStart, onTurnCancel, className = '', style,
+    children, pageCount: leafCount, renderLeaf, indexRevision, epubSessionId, startPage = 0, preparedPage = startPage, width, height, spread = true,
+    duration = 600, onPageChange, canStartDrag, onTurnStart, onTurnCancel, className = '', style, initialRenderLoading = false,
 }, forwardedRef) {
     const reducedMotion = useReducedMotion();
     const rootRef = useRef(null);
@@ -17,8 +18,13 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
     const propsRef = useRef(null);
     const [displayedPage, setDisplayedPage] = useState(startPage);
     const [preparingPage, setPreparingPage] = useState(null);
-    const pages = Children.toArray(children);
-    propsRef.current = { width, height, spread, duration, onPageChange, canStartDrag, onTurnStart, onTurnCancel, pageCount: pages.length, reducedMotion };
+    const previousRevision = useRef(indexRevision);
+    const reindexed = previousRevision.current !== indexRevision;
+    const pages = renderLeaf ? null : Children.toArray(children);
+    const pageCount = renderLeaf ? leafCount : pages.length;
+    const nativeCapture = useMemo(() => createEpubCurlCapture(epubSessionId), [epubSessionId]);
+    useEffect(() => () => nativeCapture?.clear(), [nativeCapture]);
+    propsRef.current = { width, height, spread, duration, onPageChange, canStartDrag, onTurnStart, onTurnCancel, pageCount, reducedMotion, nativeCapture };
 
     useImperativeHandle(forwardedRef, () => {
         const normalize = value => {
@@ -155,7 +161,7 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
             const pendingSnapshots = snapshotPageCurlLeaves(indexes.map((index, offset) => ({
                 node: rootRef.current.querySelector(`[data-flipbook-index="${index}"]`),
                 width, height, x: offset % slots * width, pixelRatio,
-            })));
+            })), { nativeCapture: propsRef.current.nativeCapture });
             let prepareTimer;
             const results = await Promise.race([
                 pendingSnapshots,
@@ -345,6 +351,14 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
     }, [width, height, spread]);
 
     useLayoutEffect(() => {
+        if (!reindexed) return;
+        previousRevision.current = indexRevision;
+        interactionRef.current?.cancel({ notify: false });
+        runtimeRef.current.index = preparedPage;
+        setDisplayedPage(preparedPage);
+    }, [reindexed, indexRevision, preparedPage]);
+
+    useLayoutEffect(() => {
         if (reducedMotion) interactionRef.current?.reduceMotion();
         else if (runtimeRef.current.drag) interactionRef.current?.cancel();
     }, [reducedMotion]);
@@ -354,7 +368,43 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
     }, []);
 
     const slots = spread ? 2 : 1;
-    const targetGroup = Math.floor((preparingPage ?? preparedPage) / slots);
+    useEffect(() => {
+        if (!nativeCapture || initialRenderLoading || reducedMotion || displayedPage !== preparedPage) return undefined;
+        const root = rootRef.current;
+        const fonts = root.ownerDocument.fonts;
+        let timer;
+        let cancelled = false;
+        const schedule = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+                if (runtimeRef.current.target !== null || runtimeRef.current.drag || fonts?.status === 'loading') return;
+                const pixelRatio = Math.min(2, window.devicePixelRatio || 1, 4096 / Math.max(width * slots, height));
+                const leaves = Array.from({ length: slots * 2 }, (_, offset) => ({
+                    node: root.querySelector(`[data-flipbook-index="${displayedPage + offset}"]`), width, height, pixelRatio,
+                }));
+                nativeCapture.warm(leaves)?.then(() => { if (!cancelled) schedule(); });
+            }, 80);
+        };
+        const observer = new MutationObserver(schedule);
+        observer.observe(root, { subtree: true, attributes: true, attributeFilter: ['data-original-ready'] });
+        fonts?.addEventListener('loadingdone', schedule);
+        schedule();
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+            observer.disconnect();
+            fonts?.removeEventListener('loadingdone', schedule);
+        };
+    }, [nativeCapture, initialRenderLoading, reducedMotion, displayedPage, preparedPage, slots, width, height]);
+    const visibleStart = reindexed ? preparedPage : displayedPage;
+    const targetGroup = Math.floor((reindexed ? preparedPage : preparingPage ?? preparedPage) / slots);
+    const mountedIndexes = new Set();
+    const nearbyStart = Math.max(0, (targetGroup - 1) * slots);
+    const nearbyEnd = Math.min(pageCount, (targetGroup + 2) * slots);
+    for (let index = visibleStart; index < Math.min(visibleStart + slots, pageCount); index += 1) {
+        mountedIndexes.add(index);
+    }
+    for (let index = nearbyStart; index < nearbyEnd; index += 1) mountedIndexes.add(index);
     return (
         <div ref={rootRef} className={`${className} viewer-page-curl-book`.trim()} style={{ ...style, width: width * slots, height }}
             onPointerDown={event => interactionRef.current?.pointerDown(event)}
@@ -364,15 +414,15 @@ const ViewerPageCurlBook = forwardRef(function ViewerPageCurlBook({
             onTouchStart={event => { if (runtimeRef.current.drag) event.stopPropagation(); }}
             onTouchMove={event => { if (runtimeRef.current.drag) event.stopPropagation(); }}
             onTouchEnd={event => { if (runtimeRef.current.drag) event.stopPropagation(); }}>
-            {pages.map((page, index) => {
-                const visible = index >= displayedPage && index < displayedPage + slots;
-                const prepared = visible || Math.abs(Math.floor(index / slots) - targetGroup) <= 1;
+            {[...mountedIndexes].sort((a, b) => a - b).map(index => {
+                const page = renderLeaf ? renderLeaf(index) : pages[index];
+                const visible = index >= visibleStart && index < visibleStart + slots;
                 return cloneElement(page, {
                     'data-curl-visible': String(visible),
                     'aria-hidden': visible ? undefined : true,
                     style: {
                         ...page.props.style, position: 'absolute', top: 0, left: index % slots * width,
-                        width, height, display: prepared ? 'flex' : 'none', visibility: visible ? 'visible' : 'hidden',
+                        width, height, display: 'flex', visibility: visible ? 'visible' : 'hidden',
                         opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none',
                     },
                 });

@@ -24,7 +24,7 @@ test('original EPUB audio proxies keep layout and delegate playback without load
         await fs.writeFile(path.join(directory, 'fixture.jsx'), `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import EpubOriginalDocument from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubOriginalDocument.jsx')}`)};
+import EpubOriginalDocument, { canMeasureEpubTextTogether, EpubTextMeasurementFrame } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubOriginalDocument.jsx')}`)};
 import { applyEpubOriginalTheme, buildEpubOriginalDocument, getEpubOriginalAnchorRects } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/epubOriginalDocument.js')}`)};
 const check = (condition, message) => { if (!condition) throw new Error(message); };
 const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
@@ -232,6 +232,31 @@ window.audioProxyTests = (async () => {
         await until(() => onlyLayout && document.querySelector('iframe')?.dataset.originalReady === 'true', 'Audio-only chapter did not become ready');
         check(onlyLayout.pageCount === 1 && onlyLayout.anchors.only === 0, 'Audio-only chapters without controls must retain their single chapter cue');
         check(getEpubOriginalAnchorRects(document.querySelector('iframe').contentDocument.getElementById('only')).length === 1, 'Only a chapter consisting entirely of hidden audio may use its chapter region');
+    }
+    const textChapters = Array.from({ length: 4 }, (_, index) => ({
+        name: 'text-' + index,
+        original: { html: '<html lang="ko"><body><h1 id="heading">Chapter ' + index + '</h1>'
+            + '<p>문단입니다. <span data-bm-tts="replace" data-bm-tts-text="낭독">원문</span></p>'.repeat(15)
+            + '<p id="last">' + '여러 쪽으로 나뉘는 긴 문장 '.repeat(160) + '</p></body></html>',
+            stylesheet: 'p{font:17px/1.7 serif;margin:0 0 8px}', resourceUrls: {} },
+    }));
+    check(textChapters.every(canMeasureEpubTextTogether) && !canMeasureEpubTextTogether(chapter) && !canMeasureEpubTextTogether(fixedChapter), 'Incorrect text measurement eligibility');
+    for (const patch of [{ stylesheet: '@font-face { font-family: Book; src: url(book.woff2) }' },
+        { html: '<body><img src="image.png"></body>' }, { html: '<body dir="rtl"><p>Text</p></body>' }]) {
+        check(!canMeasureEpubTextTogether({ original: { ...textChapters[0].original, ...patch } }), 'Resource-dependent or directional chapter used the text-only frame');
+    }
+    const size = { width: 270, height: 310 };
+    const appearance = { horizontalPadding: 12, verticalPadding: 12, theme: { bg: '#101020', fg: '#eeeef0' } };
+    let batch;
+    const isolated = {};
+    root.render(<>
+        <EpubTextMeasurementFrame chapters={textChapters} pageSize={size} appearance={appearance} scale={1.25} onComplete={results => batch = results} />
+        {textChapters.map(item => <EpubOriginalDocument key={item.name} chapter={item} mode="measure" pageSize={size} appearance={appearance} scale={1.25} onLayout={layout => isolated[item.name] = layout} />)}
+    </>);
+    await until(() => batch && Object.keys(isolated).length === textChapters.length, 'Text measurement did not finish');
+    for (const item of textChapters) {
+        check(isolated[item.name].pageCount > 1 && isolated[item.name].ttsByPage.join('').includes('낭독'), 'Reference measurement is missing TTS or pages');
+        check(JSON.stringify(batch[item.name]) === JSON.stringify(isolated[item.name]), 'Reusable frame changed page text, TTS, anchors, or geometry: ' + item.name);
     }
     root.unmount();
     return { requests, pageCount: originalPageCount, anchors: layouts.main.anchors, mediaElements: 0 };

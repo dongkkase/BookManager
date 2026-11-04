@@ -25,8 +25,8 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
     const overviewRef = useRef(0);
     const listIdRef = useRef(listId);
     listIdRef.current = listId;
-    const invalidateCatalog = useCallback(() => {
-        catalogRef.current = null;
+    const invalidateCatalog = useCallback((keepSnapshot = false) => {
+        if (!keepSnapshot) catalogRef.current = null;
         catalogRequestRef.current += 1;
         catalogPendingRef.current = null;
     }, []);
@@ -43,12 +43,17 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
         catalogPendingRef.current = pending;
         pending.promise = (async () => {
             try {
-                const result = await window.electronAPI?.readingLists?.({ operation: 'list', id: 'library-catalog' });
+                const cached = catalogRef.current;
+                const result = await window.electronAPI?.readingLists?.({
+                    operation: 'list', id: 'library-catalog',
+                    ...(cached?.catalogVersion ? { catalogVersion: cached.catalogVersion } : {}),
+                });
                 if (!result?.success) throw new Error(result?.error || 'unavailable');
+                if (cached && result.unchanged) return cached;
                 await prepareAuthorCatalog(result.files, language, {
                     isCurrent: () => sequence === catalogRequestRef.current && catalogScopeRef.current === libraryScopeKey,
                 });
-                const nextSnapshot = { id: 'library-catalog', files: result.files, previewRevision: sequence, libraryScopeKey };
+                const nextSnapshot = { id: 'library-catalog', files: result.files, previewRevision: sequence, libraryScopeKey, catalogVersion: result.catalogVersion };
                 if (sequence === catalogRequestRef.current && catalogScopeRef.current === libraryScopeKey) {
                     catalogRef.current = nextSnapshot;
                     setCatalogSnapshot(nextSnapshot);
@@ -171,30 +176,32 @@ export function useReadingLists(listId, t, localFiles = null, libraryPaths = [],
         catalogPendingRef.current = null;
     }, []);
     useEffect(() => {
-        const reload = () => {
+        const reload = keepCatalogSnapshot => {
             invalidateInactiveLists();
-            invalidateCatalog();
-            void refreshOverview();
+            invalidateCatalog(keepCatalogSnapshot);
+            if (listIdRef.current !== 'collections') void refreshOverview();
             void refreshRef.current();
-            void refreshCatalog({ allowCached: true }).catch(() => {});
+            void refreshCatalog().catch(() => {});
         };
+        const onFocus = () => reload(true);
+        const onChange = () => reload(false);
         void refreshOverview();
-        const unsubscribe = window.electronAPI?.onReadingListsChanged?.(reload);
-        const unsubscribeScan = window.electronAPI?.onScanComplete?.(reload);
+        const unsubscribe = window.electronAPI?.onReadingListsChanged?.(onChange);
+        const unsubscribeScan = window.electronAPI?.onScanComplete?.(onChange);
         const timer = window.setInterval(() => {
             invalidateInactiveLists();
             void refreshOverview();
             if (listIdRef.current.startsWith('recent-')) void refreshRef.current();
         }, 60000);
-        window.addEventListener('focus', reload);
-        window.addEventListener('bookmanager:metadata-saved', reload);
+        window.addEventListener('focus', onFocus);
+        window.addEventListener('bookmanager:metadata-saved', onChange);
         return () => {
             overviewRef.current += 1;
             unsubscribe?.();
             unsubscribeScan?.();
             window.clearInterval(timer);
-            window.removeEventListener('focus', reload);
-            window.removeEventListener('bookmanager:metadata-saved', reload);
+            window.removeEventListener('focus', onFocus);
+            window.removeEventListener('bookmanager:metadata-saved', onChange);
         };
     }, [invalidateCatalog, invalidateInactiveLists, refreshCatalog, refreshOverview]);
     const mutate = useCallback(async request => {

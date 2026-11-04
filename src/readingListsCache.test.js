@@ -67,9 +67,14 @@ async function fixture(initial = {}) {
                     const files = request.id?.startsWith('recent-') || request.id === 'library-catalog'
                         ? [...new Set(props.libraries)].map(root => ({ path: `${root}/${request.id}.epub`, title: `Revision ${revision}` }))
                         : [{ path: '/outside/saved.epub', title: `Revision ${revision}` }];
-                    const result = request.operation === 'overview'
-                        ? { success: true, collections: [], wishlistCount: 1, recentAddedCount: props.libraries.length, recentUpdatedCount: props.libraries.length }
-                        : { success: true, files };
+                    let result = { success: true, files };
+                    if (request.operation === 'overview') {
+                        result = { success: true, collections: [], wishlistCount: 1, recentAddedCount: props.libraries.length, recentUpdatedCount: props.libraries.length };
+                    } else if (request.id === 'library-catalog') {
+                        const catalogVersion = String(revision);
+                        result = request.catalogVersion === catalogVersion
+                            ? { success: true, catalogVersion, unchanged: true } : { ...result, catalogVersion };
+                    }
                     return hold && ['overview', 'list'].includes(request.operation)
                         ? new Promise(resolve => pending.push({ request, release: () => resolve(result) }))
                         : Promise.resolve(result);
@@ -363,6 +368,19 @@ for (const event of ['lists', 'scan', 'focus', 'bookmanager:metadata-saved']) {
     });
 }
 
+test('returning to an unchanged library retains the same catalog and derived view data', async () => {
+    const app = await fixture({ listId: 'library-catalog' });
+    try {
+        const initial = app.result();
+        app.emit('focus');
+        await app.settle();
+        assert.equal(app.result().files, initial.files);
+        assert.equal(app.result().previewRevision, initial.previewRevision);
+        assert.equal(app.result().error, '');
+        assert.deepEqual(app.calls.filter(request => request.id === 'library-catalog').map(request => request.catalogVersion), [undefined, '1']);
+    } finally { app.close(); }
+});
+
 test('library scope changes hide catalog data immediately and reject earlier scope responses', async () => {
     const app = await fixture({ listId: 'library-catalog', libraries: ['/A', '/B'] });
     try {
@@ -422,25 +440,27 @@ test('entering a catalog during its background load shares the request and leavi
     } finally { app.close(); }
 });
 
-test('an invalidated background catalog response cannot overwrite a newer snapshot', async () => {
-    const app = await fixture({ listId: '' });
-    try {
-        app.hold(true);
-        app.revision(2);
-        app.emit('scan');
-        await app.settle();
-        const outdated = app.pending.find(item => item.request.id === 'library-catalog');
-        app.revision(3);
-        app.emit('bookmanager:metadata-saved');
-        await app.settle();
-        app.pending.filter(item => item.request.id === 'library-catalog').at(-1).release();
-        await app.settle();
-        assert.equal(app.result().catalogFiles[0].title, 'Revision 3');
-        outdated.release();
-        await app.settle();
-        assert.equal(app.result().catalogFiles[0].title, 'Revision 3');
-    } finally { app.close(); }
-});
+for (const event of ['focus', 'bookmanager:metadata-saved']) {
+    test(`an older catalog request cannot overwrite a newer snapshot after ${event}`, async () => {
+        const app = await fixture({ listId: '' });
+        try {
+            app.hold(true);
+            app.revision(2);
+            app.emit('scan');
+            await app.settle();
+            const outdated = app.pending.find(item => item.request.id === 'library-catalog');
+            app.revision(3);
+            app.emit(event);
+            await app.settle();
+            app.pending.filter(item => item.request.id === 'library-catalog').at(-1).release();
+            await app.settle();
+            assert.equal(app.result().catalogFiles[0].title, 'Revision 3');
+            outdated.release();
+            await app.settle();
+            assert.equal(app.result().catalogFiles[0].title, 'Revision 3');
+        } finally { app.close(); }
+    });
+}
 
 test('a background catalog failure leaves other views usable and the catalog view can retry it', async () => {
     const app = await fixture({ listId: 'want-to-read', catalogFailure: true });

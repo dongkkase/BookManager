@@ -173,7 +173,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
-const { app, BrowserWindow, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, nativeImage, screen } = require('electron');
 const execFileAsync = promisify(execFile);
 const addon = require(${JSON.stringify(addonPath)});
 const inputPath = ${JSON.stringify(helperPath)};
@@ -182,6 +182,10 @@ app.setPath('userData', ${JSON.stringify(path.join(directory, 'profile'))});
 app.on('window-all-closed', () => {});
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function input(...args) {
+    if (args[0] === 'click' || args[0] === 'key') {
+        const frontmost = JSON.parse((await execFileAsync(inputPath, ['position'])).stdout).pid;
+        assert.equal(frontmost, process.pid, 'The native input fixture is not the foreground app');
+    }
     return (await execFileAsync(inputPath, args.map(String))).stdout;
 }
 async function until(predicate, message) {
@@ -190,7 +194,7 @@ async function until(predicate, message) {
         if (await predicate()) return;
         await pause(20);
     }
-    throw new Error(message);
+    throw new Error(typeof message === 'function' ? await message() : message);
 }
 function released(state, message) {
     assert.equal(state.ownsHide, false, message + ': cursor remains hidden');
@@ -226,10 +230,13 @@ app.whenReady().then(async () => {
     let other;
     try {
         assert.equal(controller.enabled, true);
-        window = new BrowserWindow({ x: 500, y: 300, width: 600, height: 450, useContentSize: true, show: false });
+        const area = screen.getPrimaryDisplay().workArea;
+        const width = Math.min(600, area.width - 80);
+        const height = Math.min(450, area.height - 80);
+        window = new BrowserWindow({ x: area.x + Math.floor((area.width - width) / 2), y: area.y + Math.floor((area.height - height) / 2), width, height, show: false });
         const types = ['pointer', 'text', 'col-resize', 'zoom-in', 'zoom-out'];
-        const html = '<body style="margin:0;display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:200px;background:#263647;color:white">'
-            + types.map(type => '<div id="' + type + '" onclick="window.fixtureClicks=(window.fixtureClicks||0)+1" style="cursor:' + type + ';padding:16px">' + type + '</div>').join('') + '</body>';
+        const html = '<body style="margin:0;height:100vh;display:grid;grid-template:repeat(2,1fr)/repeat(3,1fr);background:#263647;color:white">'
+            + [...types, 'default'].map(type => '<div id="' + type + '" onclick="window.fixtureClicks=(window.fixtureClicks||0)+1" style="cursor:' + type + ';padding:16px">' + type + '</div>').join('') + '</body>';
         await window.loadURL('data:text/html,' + encodeURIComponent(html));
         await window.webContents.executeJavaScript('window.fixtureEvents=[]; for (const type of ["pointerdown","pointerup","mousedown","mouseup","click"]) document.addEventListener(type, event => window.fixtureEvents.push({type, x:event.clientX, y:event.clientY, button:event.button, target:event.target.id}), true);');
         window.show();
@@ -247,7 +254,10 @@ app.whenReady().then(async () => {
             const point = await pointFor(type);
             await input('move', point.x, point.y);
             const nativeType = type === 'pointer' ? 'hand' : type;
-            await until(() => state().active && state().ownsHide && state().overlayVisible && state().cursorType === nativeType, type + ': software cursor did not activate: ' + JSON.stringify(state()));
+            await until(() => state().active && state().ownsHide && state().overlayVisible && state().cursorType === nativeType, async () =>
+                type + ': software cursor did not activate: ' + JSON.stringify({ state: state(), expected: point,
+                    pointer: JSON.parse(await input('position')), fixturePid: process.pid, bounds: window.getContentBounds(),
+                    hovered: await window.webContents.executeJavaScript('document.querySelector("div:hover")?.id') }));
             assert.equal(state().nativeOverlayHitTransparent, true, 'Cursor decoration must not intercept input');
             assert.equal(state().hideCount - state().unhideCount, 1, 'One active hide must be owned');
             await pause(120);
@@ -265,6 +275,14 @@ app.whenReady().then(async () => {
             await pause(120);
             await captureCursor(type, point);
         }
+        const arrow = await pointFor('default');
+        await input('move', arrow.x, arrow.y);
+        await until(() => state().cursorType === 'pointer' && !state().ownsHide, 'The ordinary arrow must use the system cursor');
+        const hides = state().hideCount;
+        await input('move', arrow.x + 10, arrow.y);
+        released(state(), 'Arrow movement');
+        assert.equal(state().hideCount, hides, 'Moving the system arrow must not activate the overlay');
+        await hover('text');
         const bounds = window.getContentBounds();
         await input('move', bounds.x - 25, bounds.y + bounds.height / 2);
         await until(() => !state().ownsHide && !state().overlayVisible, 'Leaving the window did not restore the cursor');
@@ -286,7 +304,7 @@ app.whenReady().then(async () => {
         released(state(), 'Explicit suspension');
         controller.suspendWindow(window, false);
         await hover('pointer');
-        other = new BrowserWindow({ x: 1150, y: 300, width: 250, height: 150, show: false });
+        other = new BrowserWindow({ x: area.x + 8, y: area.y + 8, width: 250, height: 150, show: false });
         await other.loadURL('data:text/html,Other fixture window');
         other.show();
         other.focus();
@@ -307,6 +325,7 @@ app.whenReady().then(async () => {
         const dragStart = await hover('pointer');
         const dragTarget = await pointFor('text');
         const outside = { x: bounds.x + bounds.width + 35, y: dragTarget.y };
+        assert.equal(JSON.parse(await input('position')).pid, process.pid, 'The drag fixture is not the foreground app');
         const drag = spawn(inputPath, ['drag', dragStart.x, dragStart.y, dragTarget.x, dragTarget.y, outside.x, outside.y].map(String), { stdio: ['pipe', 'pipe', 'pipe'] });
         let pending = '';
         let checks = Promise.resolve();

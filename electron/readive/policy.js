@@ -42,13 +42,42 @@ export function validNetmask(value) {
     return (inverted & (inverted + 1)) === 0;
 }
 
+function isTailscaleAddress(address) {
+    const number = ipv4Number(address);
+    return number !== null && (number & 0xffc00000) === 0x64400000;
+}
+
+function isTailscaleAdapter(name, addresses) {
+    if (/^tailscale(?:\d+|[ -](?:tunnel|\d+))?$/i.test(name)) return true;
+    // macOS gives tunnels generic utun names. Check the Tailscale IPv6 prefix on that same interface.
+    return /^utun\d+$/i.test(name) && addresses.some(item => item.family === 'IPv6'
+        && !item.internal && /^fd7a:115c:a1e0:/i.test(item.address));
+}
+
 export function listReadiveInterfaces(interfaces = os.networkInterfaces()) {
-    return Object.entries(interfaces).flatMap(([name, addresses]) => {
-        if (/^(?:utun|tun|tap|wg|ppp|tailscale|zerotier|docker|veth|virbr)/i.test(name)) return [];
-        return (addresses || []).filter(item => !item.internal && item.family === 'IPv4'
-            && isPrivateAddress(item.address) && validNetmask(item.netmask))
-            .map(item => ({ name, address: item.address, netmask: item.netmask }));
-    });
+    const virtualAdapter = /^(?:utun|tun|tap|wg|ppp|tailscale|zerotier|docker|veth|virbr)/i;
+    const adapters = Object.entries(interfaces).sort(([a], [b]) => Number(virtualAdapter.test(a)) - Number(virtualAdapter.test(b)));
+    const result = new Map();
+    for (const [name, addresses] of adapters) {
+        if (!addresses?.length) continue;
+        const tailscale = isTailscaleAdapter(name, addresses);
+        for (const item of addresses) {
+            if (item.internal || item.family !== 'IPv4' || result.has(item.address)) continue;
+            const local = { name, address: item.address, netmask: item.netmask };
+            if (tailscale && isTailscaleAddress(item.address)) local.kind = 'tailscale';
+            if (isAllowedReadivePeer(item.address, local)) result.set(item.address, local);
+        }
+    }
+    return [...result.values()];
+}
+
+export function isAllowedReadivePeer(remoteAddress, localInterface) {
+    if (localInterface?.kind === 'tailscale') {
+        // Tailnet peers have independent host addresses even when the adapter is configured as /32.
+        const address = String(remoteAddress || '').replace(/^::ffff:/i, '');
+        return isTailscaleAddress(localInterface.address) && isTailscaleAddress(address);
+    }
+    return isOnLink(remoteAddress, localInterface);
 }
 
 export function isOnLink(remoteAddress, localInterface) {

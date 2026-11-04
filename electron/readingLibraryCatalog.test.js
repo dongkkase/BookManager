@@ -132,8 +132,8 @@ test('라이브러리 카탈로그 IPC는 stat 없이 정규화하고 현재 등
         broadcast: () => assert.fail('Catalog reads must not broadcast changes'),
     });
     const stat = t.mock.method(fs, 'stat', () => assert.fail('Catalog reads must not access original files'));
-    const request = () => handlers.get('reading:lists')({ sender, senderFrame: sender.mainFrame }, {
-        operation: 'list', id: 'library-catalog', libraryPaths: [root],
+    const request = catalogVersion => handlers.get('reading:lists')({ sender, senderFrame: sender.mainFrame }, {
+        operation: 'list', id: 'library-catalog', libraryPaths: [root], catalogVersion,
     });
     try {
         const result = await request();
@@ -154,8 +154,22 @@ test('라이브러리 카탈로그 IPC는 stat 없이 정규화하고 현재 등
         assert.equal(Object.hasOwn(file, 'duplicate_matches'), false);
         assert.equal(Object.hasOwn(file, 'exists'), false);
         assert.equal(file.isDirectory, false);
+        const prepare = t.mock.method(library.getConnection(), 'prepare');
+        assert.deepEqual(await request(result.catalogVersion), { success: true, catalogVersion: result.catalogVersion, unchanged: true });
+        assert.ok(prepare.mock.calls.every(call => !/\bFROM\s+(?:files|reading_file_activity)\b/i.test(call.arguments[0])));
+        await library.upsertFileInfo({ ...record, title: 'Changed locally' });
+        const localEdit = await request(result.catalogVersion);
+        assert.equal(localEdit.files[0].title, 'Changed locally');
+        const writer = new LibraryDB({ dbPath: library.dbPath });
+        try {
+            await writer.upsertFileInfo({ ...record, title: 'Changed externally' });
+        } finally {
+            await writer.close();
+        }
+        const externalEdit = await request(localEdit.catalogVersion);
+        assert.equal(externalEdit.files[0].title, 'Changed externally');
         libraries = [];
-        assert.deepEqual((await request()).files, []);
+        assert.deepEqual((await request(externalEdit.catalogVersion)).files, []);
         libraries = [root];
         assert.equal((await request()).files.length, 2);
         assert.equal(stat.mock.callCount(), 0);

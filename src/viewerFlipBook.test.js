@@ -340,10 +340,10 @@ test('RTL 플립북의 현재 표시 인접 집합은 페이지 순서와 빈 le
     assert.deepEqual([...preloadedBookIndexes], [2, 3, 4, 5, 0, 1]);
 });
 
-test('플립북은 전체 leaf shell을 유지하고 현재 펼침면부터 인접 펼침면까지만 단계적으로 마운트한다', () => {
+test('플립북은 필요한 인덱스의 페이지만 만들고 인접 펼침면을 단계적으로 준비한다', () => {
     assert.match(
         viewerFlipBookSource,
-        /const pageElements = useMemo\(\(\) => model\.entries\.map\(entry => \(/,
+        /const renderBookLeaf = useCallback\(index => \{\s*const entry = model\.entries\[index\]/,
     );
     assert.match(
         viewerSource,
@@ -546,5 +546,5 @@ test('두장보기 Home과 End 이동은 진행 중인 애니메이션을 끝내
     assert.doesNotMatch(viewerSource, /flipBookRef\.current\?\.flip\?\.\(currentBookIndex\)/);
     assert.match(viewerSource, /event\.key === 'Home'[\s\S]*?goBoundaryPage\(-1\)/);
     assert.match(viewerSource, /event\.key === 'End'[\s\S]*?goBoundaryPage\(1\)/);
-    assert.match(viewerSource, /const goBoundaryPage = useCallback\(delta => \{\s*cancelMotion\(\);\s*setAbsolutePageJumpSequence\(current => current \+ 1\);\s*goNavigationPage\(delta < 0 \? 0 : Math\.max\(0, pageCount - 1\)\)/);
+    assert.match(viewerSource, /const goBoundaryPage = useCallback\(delta => \{\s*if \(deferEpubJump\('boundary', delta\)\) return;\s*cancelMotion\(\);\s*setAbsolutePageJumpSequence\(current => current \+ 1\);\s*goNavigationPage\(delta < 0 \? 0 : Math\.max\(0, pageCount - 1\)\)/);
 });

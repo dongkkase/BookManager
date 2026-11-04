@@ -118,6 +118,7 @@ Storage.prototype.getItem = function(key) {
 let changed;
 let catalogResponseGate = null;
 let catalogResponses = 0;
+let catalogReuses = 0;
 window.electronAPI = {
     showMessage: async options => { profilePhotoConfirmations.push(options); return 'yes'; },
     saveAuthorProfilePhoto: async profile => {
@@ -149,9 +150,13 @@ window.electronAPI = {
         if (request.operation === 'overview') return { success: true, collections: [], wishlistCount: 0, recentAddedCount: 0, recentUpdatedCount: 0 };
         if (request.id !== 'library-catalog') return { success: true, files: [] };
         if (catalogResponseGate) await catalogResponseGate;
+        if (request.catalogVersion === String(catalogResponses)) {
+            catalogReuses += 1;
+            return { success: true, catalogVersion: request.catalogVersion, unchanged: true };
+        }
         const clonedFiles = structuredClone(files);
         catalogResponses += 1;
-        return { success: true, files: clonedFiles };
+        return { success: true, files: clonedFiles, catalogVersion: String(catalogResponses) };
     },
     openInternalViewer: async filePath => { opened.push(filePath); return { success: true }; },
     getFilePreview: async filePath => {
@@ -1036,14 +1041,15 @@ window.catalogResult = (async () => {
     const revisitMs = Math.round(performance.now() - revisitStart);
     check(requests.filter(request => request.id === 'library-catalog').length === catalogRequests, 'Catalog revisit repeated the full library IPC');
     const responsesBeforeFocus = catalogResponses;
-    const finishFocusEntry = measureResponsiveness(() => catalogResponses > responsesBeforeFocus
-        && document.querySelector('.view-container')?.getAttribute('aria-busy') === 'true');
+    const reusesBeforeFocus = catalogReuses;
+    const finishFocusEntry = measureResponsiveness();
     window.dispatchEvent(new Event('focus'));
     await click('주석', document.querySelector('.sidebar-container'));
-    await until(() => catalogResponses > responsesBeforeFocus
+    await until(() => catalogReuses > reusesBeforeFocus
         && document.querySelector('.view-container')?.getAttribute('aria-busy') === 'false'
         && document.querySelectorAll('.annotation-card').length === 11, 'Focus refresh interrupted annotation entry');
     const focusEntry = finishFocusEntry();
+    check(catalogResponses === responsesBeforeFocus, 'Returning to an unchanged catalog must not transfer the full library');
     check(badge('저자') === String(largeAuthorTotal) && badge('주석') === '11', 'Focus refresh lost catalog counts');
     await click('저자', document.querySelector('.sidebar-container'));
     await until(() => statusText() === expectedLargeStatus, 'Authors did not return after the focus refresh');

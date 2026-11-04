@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { ViewerSessionManager } from './viewerSessions.js';
-import { replaceZipEntry } from './core/zipArchive.js';
+import { replaceZipEntries, replaceZipEntry } from './core/zipArchive.js';
 
 function pngHeader(width, height) {
     const buffer = Buffer.alloc(24);
@@ -499,6 +499,71 @@ test('CBZ 확장자의 비 ZIP 압축 파일은 엔트리 캐시 없이 7z fallb
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
+});
+
+test('EPUB 뷰어는 300화의 본문과 중첩 NCX 목차를 마지막 회차까지 읽는다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-long-epub-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const filePath = path.join(root, 'series.epub');
+    const episodes = Array.from({ length: 300 }, (_, index) => index + 1);
+    const navPoint = number => `<navPoint><navLabel><text>${number}화</text></navLabel><content src="ch${number}.xhtml#start" />`;
+    const ncx = episodes.filter(number => number % 2 === 1)
+        .map(number => navPoint(number) + navPoint(number + 1) + '</navPoint></navPoint>').join('');
+    fs.writeFileSync(filePath, Buffer.alloc(0));
+    await replaceZipEntry(filePath, 'META-INF/container.xml', '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>');
+    await replaceZipEntries(filePath, [
+        { name: 'book.opf', content: `<package><manifest><item id="toc" href="book.ncx" media-type="application/x-dtbncx+xml"/>
+            ${episodes.map(number => `<item id="ch${number}" href="ch${number}.xhtml" media-type="application/xhtml+xml"/>`).join('')}
+            </manifest><spine toc="toc">${episodes.map(number => `<itemref idref="ch${number}"/>`).join('')}</spine></package>` },
+        { name: 'book.ncx', content: `<ncx><navMap>${ncx}</navMap></ncx>` },
+        ...episodes.map(number => ({
+            name: `ch${number}.xhtml`, content: `<html><body><p id="start">${number}화 본문</p></body></html>`,
+        })).reverse(),
+    ]);
+
+    const manager = new ViewerSessionManager();
+    const session = manager.create(filePath, { skipAdjacent: true });
+    const { chapters, toc } = await manager.getEpubText(session.id);
+    assert.equal(chapters.length, episodes.length);
+    assert.deepEqual(chapters.map(chapter => chapter.text), episodes.map(number => `${number}화 본문`));
+    assert.equal(toc.length, episodes.length);
+    assert.deepEqual(toc.map(item => [item.title, item.chapterIndex, item.anchor]),
+        episodes.map(number => [`${number}화`, number - 1, 'start']));
+});
+
+test('장편 EPUB은 반복 참조와 ZIP 크기 위조를 검사하고 본문을 일부만 반환하지 않는다', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmanager-viewer-spine-limits-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const manager = new ViewerSessionManager();
+    const createSeries = async (count, declaredSize) => {
+        const filePath = path.join(root, `series-${count}-${declaredSize}.epub`);
+        fs.writeFileSync(filePath, Buffer.alloc(0));
+        await replaceZipEntry(filePath, 'part.xhtml', '<html><body><p>본문</p></body></html>');
+        await replaceZipEntry(filePath, 'book.opf', `<package><manifest><item id="part" href="part.xhtml"/></manifest>
+            <spine>${'<itemref idref="part"/>'.repeat(count)}</spine></package>`);
+        if (declaredSize !== undefined) {
+            const zip = fs.readFileSync(filePath);
+            const nameOffset = zip.lastIndexOf(Buffer.from('part.xhtml'));
+            const recordOffset = nameOffset - 46;
+            assert.equal(zip.readUInt32LE(recordOffset), 0x02014b50);
+            zip.writeUInt32LE(declaredSize, recordOffset + 24);
+            fs.writeFileSync(filePath, zip);
+        }
+        return manager.create(filePath, { skipAdjacent: true });
+    };
+
+    const tooMany = await createSeries(10001);
+    await assert.rejects(manager.getEpubText(tooMany.id), /10,000 chapter documents/);
+    const indexed = await manager.getEpubText(tooMany.id, { textOnly: true });
+    assert.equal(indexed.chapters.length, 200);
+    assert.equal(indexed.truncated, true);
+
+    const oversized = await createSeries(201, 2 * 1024 * 1024);
+    await assert.rejects(manager.getEpubText(oversized.id), /256 MiB/);
+    const understated = await createSeries(201, 1);
+    await assert.rejects(manager.getEpubText(understated.id), /size differs from the ZIP directory/);
+    const legacy = await createSeries(200, 2 * 1024 * 1024);
+    assert.equal((await manager.getEpubText(legacy.id)).chapters.length, 200);
 });
 
 test('EPUB 뷰어 세션은 목차 제목과 내부 이미지를 읽기 페이지 데이터로 변환한다', async () => {

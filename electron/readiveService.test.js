@@ -29,6 +29,33 @@ function api(service, token, method, route, body) {
     return service.dispatch({ ...remote, token, method, pathname: `${prefix}${route}`, body });
 }
 
+test('a running listener rejects a different adapter that takes over the selected IP and subnet', async t => {
+    const { service, pair } = await fixture(t);
+    const token = await pair();
+    service.interfaces = () => [{ ...local, name: 'tap0' }];
+    await assert.rejects(api(service, token, 'GET', '/jobs'), /lan_only/);
+});
+
+test('a Tailscale peer pairs through the selected endpoint and still needs its device token', async t => {
+    const { service } = await fixture(t);
+    const tailnet = { name: 'tailscale0', address: '100.80.0.2', netmask: '255.255.255.255', kind: 'tailscale' };
+    service.interfaces = () => [local, tailnet];
+    service.localInterface = tailnet;
+    const endpoint = { remoteAddress: '100.125.99.3', localAddress: tailnet.address };
+    const jobs = { ...endpoint, method: 'GET', pathname: `${prefix}/jobs` };
+    await assert.rejects(service.dispatch(jobs), /unauthorized/);
+    const ticket = JSON.parse((await service.pairing()).ticket);
+    assert.equal(ticket.host, tailnet.address);
+    const paired = await service.dispatch({ ...endpoint, method: 'POST', pathname: `${prefix}/pair`,
+        body: { secret: ticket.secret, deviceId: 'tailnet-device', deviceName: 'Phone' } });
+    const token = paired.json.token;
+    assert.deepEqual((await service.dispatch({ ...jobs, token })).json.jobs, []);
+    await assert.rejects(service.dispatch({ ...jobs, token, remoteAddress: '192.168.5.20' }), /lan_only/);
+    await assert.rejects(service.dispatch({ ...jobs, token, localAddress: local.address }), /lan_only/);
+    service.interfaces = () => [local];
+    await assert.rejects(service.dispatch({ ...jobs, token }), /lan_only/);
+});
+
 test('Readive session QR remains reusable while every LAN route requires authentication', async t => {
     const { service } = await fixture(t);
     const pairing = await service.pairing();

@@ -3,6 +3,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
 import { spawn } from 'child_process';
+import { Worker } from 'node:worker_threads';
 import { decodeHTMLStrict } from 'entities';
 import {
     listZipEntriesFromFile,
@@ -45,6 +46,8 @@ const SUPPORTED_VIEWER_EXTENSIONS = new Set([
     ...AUDIO_EXTENSIONS,
 ]);
 const MAX_EPUB_CHAPTER_BYTES = 8 * 1024 * 1024;
+const MAX_EPUB_SPINE_DOCUMENTS = 10000;
+const MAX_EPUB_LONG_SPINE_BYTES = 256 * 1024 * 1024;
 const MAX_EPUB_STYLESHEET_BYTES = 1024 * 1024;
 const MAX_AUDIO_ARTWORK_BYTES = 16 * 1024 * 1024;
 const MAX_VIEWER_SESSIONS = 16;
@@ -1574,11 +1577,12 @@ function parseEpubNavTitles(html = '', navEntryName = '') {
 function parseEpubNcxEntries(xml = '', ncxEntryName = '') {
     const entries = [];
     const seen = new Set();
-    const navPointPattern = /<navPoint\b[\s\S]*?<\/navPoint>/gi;
+    // Each NCX label and target precedes any child navPoints.
+    const navPointPattern = /<(?:\w+:)?navPoint\b[^>]*>([\s\S]*?)(?=<\/?(?:\w+:)?navPoint\b|$)/gi;
     for (const navPointMatch of String(xml || '').matchAll(navPointPattern)) {
-        const navPoint = navPointMatch[0];
-        const contentMatch = navPoint.match(/<content\b[^>]*src\s*=\s*(["'])([\s\S]*?)\1/i);
-        const titleMatch = navPoint.match(/<text\b[^>]*>([\s\S]*?)<\/text>/i);
+        const navPoint = navPointMatch[1];
+        const contentMatch = navPoint.match(/<(?:\w+:)?content\b[^>]*src\s*=\s*(["'])([\s\S]*?)\1/i);
+        const titleMatch = navPoint.match(/<(?:\w+:)?text\b[^>]*>([\s\S]*?)<\/(?:\w+:)?text>/i);
         const target = parseEpubInternalHref(ncxEntryName, decodeEpubEntities(contentMatch?.[2] || ''));
         const entryName = target?.entryName || '';
         const title = htmlFragmentText(titleMatch?.[1] || '');
@@ -1958,6 +1962,7 @@ async function extractArchiveEntry(filePath, entryName, sevenZExe, options = {})
             if (cachedEntry) {
                 const cachedBuffer = await readZipEntryFromFile(filePath, cachedEntry, {
                     signal: options.signal,
+                    asyncInflate: options.asyncInflate,
                     maxBytes: options.maxBytes,
                     maxCompressedBytes: options.maxCompressedBytes,
                 });
@@ -1974,6 +1979,7 @@ async function extractArchiveEntry(filePath, entryName, sevenZExe, options = {})
             if (!entry) throw new Error(`${entryName} not found`);
             const buffer = await readZipEntryFromFile(filePath, entry, {
                 signal: options.signal,
+                asyncInflate: options.asyncInflate,
                 maxBytes: options.maxBytes,
                 maxCompressedBytes: options.maxCompressedBytes,
             });
@@ -2497,6 +2503,7 @@ export class ViewerSessionManager {
         if (cached) this.epubAudioAssetCache.delete(cacheKey);
         const buffer = await extractArchiveEntry(session.filePath, entryName, '', {
             maxBytes: assetIsAudio ? MAX_EPUB_AUDIO_BYTES : assetIsFont ? 64 * 1024 * 1024 : 32 * 1024 * 1024,
+            asyncInflate: !assetIsAudio,
         });
         const asset = {
             name: entryName,
@@ -2565,6 +2572,28 @@ export class ViewerSessionManager {
         const session = this.get(sessionId);
         if (session.type !== 'epub') throw new Error('This file is not an EPUB document.');
         throwIfViewerOperationAborted(options.signal);
+        if (options.packed) {
+            return new Promise((resolve, reject) => {
+                const worker = new Worker(new URL('./viewerEpubWorker.js', import.meta.url), {
+                    workerData: { id: session.id, filePath: session.filePath }, execArgv: [],
+                });
+                const abort = () => {
+                    void worker.terminate();
+                    reject(comicRequestAbortedError());
+                };
+                options.signal?.addEventListener('abort', abort, { once: true });
+                worker.once('message', resolve);
+                worker.once('error', reject);
+                worker.once('exit', code => {
+                    options.signal?.removeEventListener('abort', abort);
+                    reject(new Error(`EPUB worker exited before returning a document (${code}).`));
+                });
+            });
+        }
+        return ViewerSessionManager.readEpubSession(session, options);
+    }
+
+    static async readEpubSession(session, options = {}) {
         const signatureBefore = await archiveFileSignature(session.filePath);
         const entries = await listArchiveEntries(session.filePath, '');
         const signatureAfter = await archiveFileSignature(session.filePath);
@@ -2607,18 +2636,22 @@ export class ViewerSessionManager {
         const spineEntryNames = parseEpubSpine(opfXml)
             .map(idref => manifest.get(idref)?.entryName)
             .filter(Boolean);
-        const htmlEntries = entries
-            .filter(entry => !entry.isDir && /\.(xhtml|html|htm)$/i.test(entry.name));
         const chapterEntryNames = spineEntryNames.length > 0
             ? spineEntryNames
-            : htmlEntries
+            : entries
+                .filter(entry => !entry.isDir && /\.(xhtml|html|htm)$/i.test(entry.name))
                 .filter(entry => !/(^|\/)(nav|toc)\.(xhtml|html|htm)$/i.test(entry.name))
                 .sort((left, right) => naturalCompare(left.name, right.name))
                 .map(entry => entry.name);
+        if (options.textOnly !== true && chapterEntryNames.length > MAX_EPUB_SPINE_DOCUMENTS) {
+            throw new Error('EPUB exceeds the viewer limit of 10,000 chapter documents.');
+        }
+        const entriesByName = new Map(entries.map(entry => [entry.name, entry]));
+        const chapterEntries = chapterEntryNames
+            .map(name => entriesByName.get(name) || findArchiveEntry(entries, name))
+            .filter(Boolean);
         if (options.textOnly === true) {
-            const textEntries = chapterEntryNames
-                .map(entryName => findArchiveEntry(entries, entryName))
-                .filter(entry => entry && /\.(xhtml|html|htm)$/i.test(entry.name));
+            const textEntries = chapterEntries.filter(entry => /\.(xhtml|html|htm)$/i.test(entry.name));
             const warnings = [];
             if (textEntries.length > 200) {
                 warnings.push(`EPUB text extraction was limited to 200 of ${textEntries.length} chapters.`);
@@ -2676,6 +2709,11 @@ export class ViewerSessionManager {
                 warnings,
             };
         }
+        // Short books retain the previous per-chapter allowance.
+        const isLongEpub = chapterEntries.length > 200;
+        if (isLongEpub && chapterEntries.reduce((total, entry) => total + entry.zipEntry.uncompressedSize, 0) > MAX_EPUB_LONG_SPINE_BYTES) {
+            throw new Error('EPUB chapter data exceeds the viewer limit of 256 MiB.');
+        }
         const manifestItems = Array.from(manifest.values());
         const navItem = manifestItems.find(item => String(item.properties || '').split(/\s+/).includes('nav'))
             || manifestItems.find(item => /(^|\/)(nav|toc)\.(xhtml|html|htm)$/i.test(item.entryName || ''));
@@ -2718,10 +2756,6 @@ export class ViewerSessionManager {
                 }
             }
         }
-        const chapters = chapterEntryNames
-            .map(entryName => findArchiveEntry(entries, entryName))
-            .filter(Boolean)
-            .slice(0, 200);
         const results = [];
         const referencedImageNames = new Set();
         const stylesheetCache = new Map();
@@ -2736,11 +2770,15 @@ export class ViewerSessionManager {
             .map(attrs => [normalizeInnerPath(manifest.get(attrs.idref)?.entryName || '').toLowerCase(), attrs.properties || '']));
         const imageDimensionByEntryName = await readEpubImageDimensionMap(session.filePath, entries, readOptions);
         addUniqueEpubFontFaces(fontFaceMap, await readEpubFontFacesFromStylesheets(session, session.filePath, entries, readOptions));
-        for (const entry of chapters) {
+        for (const entry of chapterEntries) {
             const buffer = await extractArchiveEntry(session.filePath, entry.name, '', {
                 ...readOptions,
                 maxBytes: MAX_EPUB_CHAPTER_BYTES,
+                maxCompressedBytes: isLongEpub ? MAX_EPUB_CHAPTER_BYTES + 1024 * 1024 : undefined,
             });
+            if (isLongEpub && buffer.length !== entry.zipEntry.uncompressedSize) {
+                throw new Error(`EPUB chapter size differs from the ZIP directory: ${entry.name}`);
+            }
             const inlineAudio = prepareEpubInlineAudio(buffer.toString('utf8'), entry.name,
                 (base, href) => resolveEpubAudioSource(base, href, entries, session));
             const html = inlineAudio.html;

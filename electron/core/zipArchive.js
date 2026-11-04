@@ -2,6 +2,9 @@ import fs from 'fs/promises';
 import path from 'path';
 import zlib from 'zlib';
 import { randomUUID } from 'crypto';
+import { promisify } from 'node:util';
+
+const inflateRaw = promisify(zlib.inflateRaw);
 
 const EOCD_SIGNATURE = 0x06054b50;
 const ZIP64_EOCD_SIGNATURE = 0x06064b50;
@@ -378,10 +381,10 @@ export async function readZipEntryFromFile(filePath, entry, options = {}) {
         }
         if (entry.method === 8) {
             try {
-                const inflated = zlib.inflateRawSync(
-                    compressed,
-                    hasMaxBytes ? { maxOutputLength: maxBytes } : undefined,
-                );
+                const limits = hasMaxBytes ? { maxOutputLength: maxBytes } : undefined;
+                const inflated = options.asyncInflate && entry.uncompressedSize >= 256 * 1024
+                    ? await inflateRaw(compressed, limits)
+                    : zlib.inflateRawSync(compressed, limits);
                 return hasMaxBytes && inflated.length > maxBytes ? null : inflated;
             } catch {
                 return null;

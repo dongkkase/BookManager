@@ -74,6 +74,36 @@ export function buildOriginalEpubPages(chapters, layouts, { scroll = false } = {
     });
 }
 
+export function epubOpeningChapters(chapters, state) {
+    if (!state || chapters.length <= 32) return null;
+    const position = state.epubPosition;
+    let index = position?.entryName ? chapters.findIndex(chapter => chapter.name === position.entryName) : -1;
+    if (index < 0 && Number.isInteger(position?.chapterIndex)) index = position.chapterIndex;
+    if (index < 0) {
+        // Absolute legacy pages and remote percentages need the exact layout of the whole book.
+        if (position || state.readiveLocator || Number(state.pageIndex) > 0) return null;
+        index = 0;
+    }
+    if (index >= chapters.length) return null;
+    const start = Math.max(0, index - 1);
+    return { start, chapters: chapters.slice(start, index + 2), state };
+}
+
+export function buildEpubOpeningPages(group, layouts, spread) {
+    if (!group || group.chapters.some(chapter => !layouts[chapter.name])) return [];
+    const pages = buildOriginalEpubPages(group.chapters, layouts);
+    for (const page of pages) page.chapterIndex += group.start;
+    if (spread && group.start > 0 && Number.isInteger(group.state.pageIndex) && group.state.epubPosition) {
+        const index = resolveEpubReadingPosition(pages, group.state.epubPosition);
+        // Start on the saved side of a spread while the preceding chapters are still being measured.
+        if (index > 0 && index % 2 !== group.state.pageIndex % 2) {
+            const omitted = pages.shift();
+            if (pages[0].chapterIndex === omitted.chapterIndex) pages[0].openingPrefixLength = normalizedText(omitted).length;
+        }
+    }
+    return pages;
+}
+
 function matchingChapterPages(pages, position) {
     if (!Array.isArray(pages) || !position) return [];
     const entries = [];
@@ -103,14 +133,16 @@ export function captureEpubReadingPosition(pages, pageIndex) {
     const chapterPages = matchingChapterPages(pages, position);
     const chapterPageIndex = chapterPages.findIndex(entry => entry.index === index);
     if (chapterPageIndex < 0) return null;
-    const totalLength = chapterPages.reduce((total, entry) => total + entry.text.length, 0);
-    const precedingLength = chapterPages.slice(0, chapterPageIndex).reduce((total, entry) => total + entry.text.length, 0);
+    const prefixLength = chapterPages[0].page.openingPrefixLength || 0;
+    const prefixPages = chapterPages[0].page.originalPageOffset || 0;
+    const totalLength = chapterPages.reduce((total, entry) => total + entry.text.length, prefixLength);
+    const precedingLength = chapterPages.slice(0, chapterPageIndex).reduce((total, entry) => total + entry.text.length, prefixLength);
     const textQuote = chapterPages[chapterPageIndex].text.slice(0, 100);
     return {
         ...position,
         chapterProgress: totalLength > 0
             ? precedingLength / totalLength
-            : chapterPageIndex / Math.max(1, chapterPages.length - 1),
+            : (chapterPageIndex + prefixPages) / Math.max(1, chapterPages.length + prefixPages - 1),
         ...(textQuote ? { textQuote } : {}),
     };
 }
@@ -122,9 +154,11 @@ export function resolveEpubReadingPosition(pages, position) {
     const progress = Math.max(0, Math.min(1, Number.isFinite(numericProgress) ? numericProgress : 0));
     const chapterText = chapterPages.map(entry => entry.text).join('');
     if (!chapterText.length) {
-        return chapterPages[Math.round(progress * (chapterPages.length - 1))].index;
+        const prefixPages = chapterPages[0].page.originalPageOffset || 0;
+        return chapterPages[Math.max(0, Math.round(progress * (chapterPages.length + prefixPages - 1)) - prefixPages)].index;
     }
-    let targetOffset = progress * chapterText.length;
+    const prefixLength = chapterPages[0].page.openingPrefixLength || 0;
+    let targetOffset = progress * (chapterText.length + prefixLength) - prefixLength;
     const quote = typeof position.textQuote === 'string' ? normalizedText(position.textQuote).slice(0, 100) : '';
     if (quote) {
         let match = chapterText.indexOf(quote);

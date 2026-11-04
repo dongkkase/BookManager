@@ -335,7 +335,7 @@ function replaceEpubAudioElements(document, tracks) {
     });
 }
 
-export function buildEpubOriginalDocument(chapter, { mode = 'page', pageSize = {} } = {}) {
+export function buildEpubOriginalDom(chapter, { mode = 'page', pageSize = {} } = {}) {
     const original = chapter?.original || {};
     const entryName = chapter?.name || '';
     const resources = Object.fromEntries(Object.entries(original.resourceUrls || {}).filter(([name]) => VISUAL_RESOURCE_ENTRY.test(name)));
@@ -467,5 +467,23 @@ export function buildEpubOriginalDocument(chapter, { mode = 'page', pageSize = {
         html { box-sizing: border-box !important; width: ${width}px !important; height: ${height}px !important; min-height: 0 !important; max-height: ${height}px !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; column-width: ${width}px !important; column-gap: 0 !important; column-fill: auto !important; column-count: auto !important; }
     `);
     document.head.append(layoutStyle);
-    return `<!doctype html>\n${document.documentElement.outerHTML}`;
+    return document;
+}
+
+// A spread and its adjacent leaves often show different columns of the same chapter.
+const recentPageDocuments = [];
+export function buildEpubOriginalDocument(chapter, options) {
+    const cacheable = options?.mode === 'page';
+    const { width, height } = options?.pageSize || {};
+    if (cacheable) {
+        const cached = recentPageDocuments.find(item => item.chapter === chapter && item.width === width && item.height === height);
+        if (cached) return cached.html;
+    }
+    const document = buildEpubOriginalDom(chapter, options);
+    const html = `<!doctype html>\n${document.documentElement.outerHTML}`;
+    if (cacheable) {
+        recentPageDocuments.unshift({ chapter, width, height, html });
+        if (recentPageDocuments.length > 2) recentPageDocuments.pop();
+    }
+    return html;
 }

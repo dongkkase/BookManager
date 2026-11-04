@@ -173,7 +173,8 @@ test('PDF 펼침면 썸네일은 한 버튼 안에 비버튼 페이지 슬롯 �
 
 test('EPUB과 TXT 슬라이드 탐색기는 펼침면 그룹의 활성 상태와 시작 페이지 이동을 사용한다', () => {
     assert.match(viewerSource, /const readerSlideThumbGroups = buildSlideThumbGroups\(\{/);
-    assert.match(viewerSource, /readerSlideThumbGroups[\s\S]*?\.map\(group =>/);
+    assert.match(viewerSource, /<EpubSlideThumbWindow\b[^>]*renderGroup=\{renderGroup\}/);
+    assert.match(viewerSource, /readerSlideThumbGroups\.map\(renderGroup\)/);
     assert.match(viewerSource, /<ReaderSlideThumb[\s\S]*?active=\{group\.pageIndexes\.includes\(pageIndex\)\}/);
     assert.match(
         viewerSource,

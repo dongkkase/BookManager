@@ -1,12 +1,25 @@
 import { epubDomTtsSlice, selectionEpubTtsText } from '../../viewerEpubTts.js';
 import { renderTtsSegments } from '../../../electron/epubEditor/tts.js';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { applyEpubOriginalTheme, buildEpubOriginalDocument, DEFAULT_EPUB_AUDIO_LABELS, epubOriginalViewportMetrics, getEpubOriginalAnchorRects } from '../../epubOriginalDocument.js';
+import { applyEpubOriginalTheme, buildEpubOriginalDocument, buildEpubOriginalDom, DEFAULT_EPUB_AUDIO_LABELS, epubOriginalViewportMetrics, getEpubOriginalAnchorRects } from '../../epubOriginalDocument.js';
 import EpubInlineMedia from './EpubInlineMedia.jsx';
 import { ANNOTATION_COLORS, normalizeHighlightColor } from '../../highlightColors.js';
 import '../../styles/epubOriginalDocument.css';
 
 const EMPTY_HIGHLIGHTS = [];
+const SIMPLE_TEXT_TAGS = new Set('html head title link meta body main article section div h1 h2 h3 h4 h5 h6 p br span strong em b i u s sub sup blockquote hr ul ol li a ruby rt rp'.split(' '));
+
+// Chapters with media or dynamic CSS need their own document and resource loading lifecycle.
+export function canMeasureEpubTextTogether(chapter) {
+    const original = chapter.original;
+    if (!original?.html || original.layout === 'pre-paginated' || chapter.audioTracks?.length
+        || /[(@\[\\]|writing-mode|direction\s*:/i.test(original.stylesheet || '')
+        || /\s(?:style|dir|background)\s*=|http-equiv/i.test(original.html)) return false;
+    for (const match of original.html.matchAll(/<([\w:-]+)\b/gi)) {
+        if (!SIMPLE_TEXT_TAGS.has(match[1].toLowerCase())) return false;
+    }
+    return true;
+}
 
 function collectTextRanges(document, queries) {
     const viewport = document.defaultView;
@@ -59,7 +72,7 @@ function waitForImages(document) {
     })));
 }
 
-function readLayout(document, pageSize, mode, fixed, includeContent) {
+function* readLayoutSteps(document, pageSize, mode, fixed, includeContent, incremental = false) {
     const root = document.documentElement;
     const viewport = document.defaultView;
     const style = viewport.getComputedStyle(root);
@@ -82,6 +95,7 @@ function readLayout(document, pageSize, mode, fixed, includeContent) {
     const textByPage = Array.from({ length: pageCount }, () => []);
     const ttsByPage = Array.from({ length: pageCount }, () => []);
     const ttsState = {};
+    const hasTtsEdits = document.body.querySelector('[data-bm-tts], [data-bm-tts-edits]') !== null;
     const walker = document.createTreeWalker(document.body, viewport.NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
             if (!node.textContent || node.parentElement?.closest('style, script, [hidden], svg, [data-epub-audio-id]')) return viewport.NodeFilter.FILTER_REJECT;
@@ -89,11 +103,14 @@ function readLayout(document, pageSize, mode, fixed, includeContent) {
         },
     });
     const range = document.createRange();
+    let slices = 0;
     let node;
     while ((node = walker.nextNode())) {
-        const length = node.textContent.length;
+        const value = node.textContent;
+        const length = value.length;
         let start = 0;
         while (start < length) {
+            if (incremental && ++slices % 32 === 0) yield;
             range.setStart(node, start);
             range.setEnd(node, start + 1);
             const rect = range.getClientRects()[0];
@@ -104,6 +121,15 @@ function readLayout(document, pageSize, mode, fixed, includeContent) {
             const page = pageForRect(rect);
             let low = start + 1;
             let high = length;
+            if (low < high && start === 0 && length <= 4096) {
+                range.setEnd(node, length);
+                const fits = Array.from(range.getClientRects()).every(fragment => {
+                    const first = position(fragment);
+                    const last = first + (vertical ? fragment.height : fragment.width);
+                    return first >= page * pageExtent && last + 0.5 < (page + 1) * pageExtent;
+                });
+                if (fits) low = length;
+            }
             while (low < high) {
                 const middle = Math.floor((low + high + 1) / 2);
                 range.setStart(node, middle - 1);
@@ -112,16 +138,70 @@ function readLayout(document, pageSize, mode, fixed, includeContent) {
                 if (!endRect || pageForRect(endRect) <= page) low = middle;
                 else high = middle - 1;
             }
-            textByPage[page].push(node.textContent.slice(start, low));
+            const text = value.slice(start, low);
+            textByPage[page].push(text);
             const block = node.parentElement?.closest('p, div, li, td, th, h1, h2, h3, h4, h5, h6, blockquote');
             if (ttsState.previousBlock && block !== ttsState.previousBlock) ttsByPage[page].push({ text: '\n' });
-            ttsByPage[page].push(...epubDomTtsSlice(node, start, low, ttsState));
+            if (hasTtsEdits) ttsByPage[page].push(...epubDomTtsSlice(node, start, low, ttsState));
+            else ttsByPage[page].push({ text });
             ttsState.previousBlock = block;
             start = low;
         }
     }
     range.detach();
     return { pageCount, anchors, textByPage: textByPage.map(parts => parts.join(' ').replace(/\s+/g, ' ').trim()), ttsByPage: ttsByPage.map(segments => renderTtsSegments(segments, { preserveDialogue: true })), vertical, rtl };
+}
+
+function readLayout(document, pageSize, mode, fixed, includeContent) {
+    return readLayoutSteps(document, pageSize, mode, fixed, includeContent).next().value;
+}
+
+export function EpubTextMeasurementFrame({ chapters, pageSize, appearance, scale, onComplete }) {
+    const [document, setDocument] = useState(null);
+    const { width, height } = epubOriginalViewportMetrics(pageSize, appearance, scale);
+    useEffect(() => {
+        if (!document) return undefined;
+        let timer;
+        let index = 0;
+        let steps = null;
+        const layouts = Object.create(null);
+        const measureBatch = () => {
+            const started = performance.now();
+            do {
+                const chapter = chapters[index];
+                try {
+                    if (!steps) {
+                        const source = buildEpubOriginalDom(chapter, { mode: 'measure', pageSize: { width, height } });
+                        // The reusable sandbox already has a stricter no-network policy for these static chapters.
+                        source.head.querySelector('meta[http-equiv="Content-Security-Policy"]')?.remove();
+                        document.replaceChild(source.documentElement, document.documentElement);
+                        steps = readLayoutSteps(document, { width, height }, 'measure', false, true, true);
+                    } else {
+                        const step = steps.next();
+                        if (step.done) {
+                            layouts[chapter.name] = step.value;
+                            steps = null;
+                            index += 1;
+                        }
+                    }
+                } catch {
+                    // The standard iframe path retries chapters missing from this result.
+                    steps = null;
+                    index += 1;
+                }
+            } while (index < chapters.length && performance.now() - started < 8);
+            if (index < chapters.length) timer = setTimeout(measureBatch, 0);
+            else onComplete(layouts);
+        };
+        timer = setTimeout(measureBatch, 0);
+        return () => clearTimeout(timer);
+    }, [document, chapters, width, height, onComplete]);
+    return <div className="viewer-epub-original-document is-measure" aria-hidden="true">
+        <iframe className="viewer-epub-original-frame" title="EPUB" tabIndex={-1} sandbox="allow-same-origin" scrolling="no"
+            style={{ width, height }}
+            srcDoc={'<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><body></body>'}
+            onLoad={event => setDocument(event.currentTarget.contentDocument)} />
+    </div>;
 }
 
 export default function EpubOriginalDocument({
@@ -226,8 +306,11 @@ export default function EpubOriginalDocument({
         const layout = layoutRef.current;
         if (!document || !layout || fixed || mode === 'scroll') return;
         const offset = Math.max(0, Math.min(layout.pageCount - 1, Number(callbacksRef.current.pageOffset) || 0));
-        document.documentElement.scrollLeft = layout.vertical ? 0 : offset * width * (layout.rtl ? -1 : 1);
-        document.documentElement.scrollTop = layout.vertical ? offset * height : 0;
+        document.documentElement.scrollTo({
+            left: layout.vertical ? 0 : offset * width * (layout.rtl ? -1 : 1),
+            top: layout.vertical ? offset * height : 0,
+            behavior: 'instant',
+        });
         updateMediaLayout();
     }, [fixed, mode, width, height, updateMediaLayout]);
 
@@ -241,7 +324,7 @@ export default function EpubOriginalDocument({
         setContentHeight(height);
         return () => cleanupRef.current();
     }, [srcDoc, height]);
-    useEffect(showOffset, [showOffset, pageOffset]);
+    useLayoutEffect(showOffset, [showOffset, pageOffset]);
     useEffect(() => {
         const document = frameRef.current?.contentDocument;
         const viewport = document?.defaultView;
@@ -501,7 +584,8 @@ export default function EpubOriginalDocument({
                 tabIndex={mode === 'measure' ? -1 : 0}
                 data-original-ready={ready ? 'true' : 'false'}
                 data-original-entry={chapter?.name || ''}
-                style={{ width: frameWidth, height: frameHeight, top: fixed ? verticalPadding : undefined, backgroundColor: documentColors.bg, transform: `scale(${fixedScale * displayScale})` }}
+                style={{ width: frameWidth, height: frameHeight, top: fixed ? verticalPadding : undefined, backgroundColor: documentColors.bg, transform: `scale(${fixedScale * displayScale})`,
+                    visibility: mode === 'page' && pageOffset > 0 && !ready ? 'hidden' : undefined }}
                 onLoad={handleLoad}
             />
             {ready && mediaActive && mode !== 'measure' && mediaLayout.items.length > 0 && (

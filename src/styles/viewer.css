@@ -4674,6 +4674,8 @@ body,
 }
 
 .viewer-slide-strip {
+    --viewer-slide-thumb-width: 68px;
+    --viewer-reader-spread-width: 110px;
   position: relative;
   z-index: 1;
     flex: 1 1 0;
@@ -4721,9 +4723,17 @@ body,
   direction: ltr;
 }
 
+.viewer-epub-slide-track {
+    display: flex;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    gap: inherit;
+    overflow-anchor: none;
+}
+
 .viewer-slide-thumb {
   flex: 0 0 auto;
-  width: 68px;
+  width: var(--viewer-slide-thumb-width);
   height: 86px;
   border: 1px solid #3c3c3c;
   border-radius: 6px;
@@ -4857,7 +4867,7 @@ body,
 }
 
 .viewer-slide-thumb.is-reader.is-spread {
-  width: 110px;
+  width: var(--viewer-reader-spread-width);
 }
 
 .viewer-slide-thumb.is-reader.is-spread .viewer-slide-thumb-canvas {

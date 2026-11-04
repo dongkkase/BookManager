@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { createServer } from 'vite';
 
@@ -26,6 +26,7 @@ test('책넘김은 실제 페이지를 유지하고 이동 취소와 캔버스 �
         await fs.writeFile(path.join(directory, 'fixture.jsx'), `
 import React, { useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
+import { fontUrlFromFace } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/bundledFonts.js')}`)};
 import ViewerPageCurlBook from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/ViewerPageCurlBook.jsx')}`)};
 import { applyMotionPreference } from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/motionPolicy.js')}`)};
 import EpubInlineMedia from ${JSON.stringify(`/@fs/${path.join(projectRoot, 'src/components/viewer/EpubInlineMedia.jsx')}`)};
@@ -141,6 +142,208 @@ async function startFlip(index) {
     await frames();
     api().flip(index);
     await until(() => painted(overlay()), 'A page turn must paint the actual page snapshot');
+}
+async function verifyNativeEpubSnapshots() {
+    const nativeLeaves = [];
+    const nativeRequests = [];
+    const ink = ['rgb(180,36,48)', 'rgb(30,75,180)'];
+    const nativeDocument = '<!doctype html><html><head><style data-original-layout>'
+        + '@font-face{font-family:CurlNativeFixture;src:local("Arial"),local("Liberation Sans"),url("/@fs/${path.join(projectRoot, 'src/fonts/NanumGothic-Regular.ttf')}")}html{width:80px;height:64px;overflow:hidden;column-width:80px;column-gap:0;column-fill:auto}'
+        + 'body{margin:0;font:12px CurlNativeFixture,serif}p{width:80px;height:64px;margin:0;break-after:column}p:first-child{background:' + ink[0] + '}p:last-child{background:' + ink[1] + '}</style></head><body><p>A</p><p>B</p></body></html>';
+    for (let index = 0; index < 2; index += 1) {
+        const node = document.createElement('div');
+        node.style.cssText = 'position:fixed;top:20px;left:' + (20 + 190 * index) + 'px;z-index:10001;width:180px;height:160px';
+        const article = document.createElement('article');
+        article.className = 'viewer-text-page is-original-reader';
+        article.style.cssText = 'position:relative;box-sizing:border-box;width:180px;height:160px;margin:0;padding:0;border:0;background:#eeeeee';
+        const clip = document.createElement('div');
+        clip.className = 'viewer-epub-original-document is-page';
+        clip.style.cssText = 'position:absolute;left:20px;top:18px;width:110px;height:88px;overflow:hidden;background:#eeeeee';
+        const iframe = document.createElement('iframe');
+        iframe.className = 'viewer-epub-original-frame';
+        iframe.dataset.originalEntry = 'book.xhtml';
+        iframe.style.cssText = 'width:80px;height:64px;border:0;display:block;transform-origin:0 0;transform:scale(1.5)';
+        const loaded = new Promise(resolve => iframe.addEventListener('load', resolve, { once: true }));
+        iframe.srcdoc = nativeDocument;
+        clip.append(iframe); article.append(clip); node.append(article); document.body.append(node);
+        await loaded;
+        await iframe.contentDocument.fonts.ready;
+        check([...iframe.contentDocument.fonts].some(font => font.status === 'loaded'), 'Embedded-font fixture must load its face');
+        iframe.contentDocument.documentElement.scrollLeft = index * 80;
+        iframe.dataset.originalReady = 'true';
+        nativeLeaves.push({ node, width: 180, height: 160, x: index * 180, pixelRatio: 2 });
+    }
+    await frames();
+    const captureOptions = { epubSessionId: 'sample' };
+    window.viewerAPI = { captureEpubCurl: async request => {
+        nativeRequests.push(request);
+        return Promise.all(request.pages.map(async (page, index) => {
+            const { width, height } = request.documents[page.documentIndex];
+            const tile = document.createElement('canvas');
+            tile.width = width; tile.height = height;
+            const context = tile.getContext('2d');
+            context.fillStyle = ink[index]; context.fillRect(0, 0, width, height);
+            const bytes = index ? new Uint8Array(context.getImageData(0, 0, width, height).data)
+                : new Uint8Array(await (await new Promise(resolve => tile.toBlob(resolve, 'image/png'))).arrayBuffer());
+            tile.width = tile.height = 0;
+            return { format: index ? 'rgba' : 'png', width, height, bytes };
+        }));
+    } };
+    const nativeSnapshots = await snapshotPageCurlLeaves(nativeLeaves, captureOptions);
+    check(nativeRequests.length === 1 && nativeRequests[0].sessionId === 'sample', 'Eligible original leaves must share one native request');
+    const captureRequest = nativeRequests[0];
+    check(captureRequest.pages.length === 2 && captureRequest.pages.every((page, index) => page.scrollLeft === 80 * index && page.scrollTop === 0), 'Native capture lost the current or target column');
+    check(captureRequest.documents.length === 1 && captureRequest.pages.every(page => page.documentIndex === 0), 'Two columns in one document must share its payload');
+    check(captureRequest.documents.every(doc => doc.width === 80 && doc.height === 64 && doc.html.includes('CurlNativeFixture')), 'Native document must preserve source size and font');
+    for (const [index, result] of nativeSnapshots.entries()) {
+        check(result.status === 'fulfilled', 'Native capture did not produce a leaf');
+        const canvas = result.value.image;
+        check(canvas.width === 360 && canvas.height === 320 && result.value.frame.x === index * 180, 'Native leaf output lost scale or spread slot');
+        const origin = nativeLeaves[index].node.getBoundingClientRect();
+        const points = [[4,4], [21,75], [128,104], [133,102], [50,109]];
+        const expectedPixels = await screenPixels(points.map(([x,y]) => ({ x: origin.left + x, y: origin.top + y })));
+        points.forEach(([x,y], point) => {
+            const actual = canvas.getContext('2d').getImageData(2*x, 2*y, 1, 1).data;
+            check(expectedPixels[point].every((channel, i) => Math.abs(channel - actual[i]) <= 2), 'Native frame scaling or outer paper fill differs from the live leaf at ' + [index,x,y] + ': ' + actual + ' vs ' + expectedPixels[point]);
+        });
+    }
+    releasePageCurlSnapshots(nativeSnapshots.map(result => result.value));
+    const first = nativeLeaves[0];
+    const liveFrame = first.node.querySelector('iframe');
+    const overlayMedia = document.createElement('div');
+    overlayMedia.className = 'viewer-epub-original-media-layer';
+    first.node.querySelector('.viewer-epub-original-document').append(overlayMedia);
+    const fallback = async message => {
+        const [result] = await snapshotPageCurlLeaves([first], captureOptions);
+        check(result.status === 'fulfilled', message + ': SVG fallback failed');
+        const rgba = result.value.image.getContext('2d').getImageData(140, 140, 1, 1).data;
+        check(rgba[0] > 165 && rgba[1] < 55 && rgba[2] < 65, message + ': renderer fallback lost the page');
+        releasePageCurlSnapshots([result.value]);
+    };
+    await fallback('Media overlay');
+    overlayMedia.remove();
+    const range = liveFrame.contentDocument.createRange();
+    range.selectNodeContents(liveFrame.contentDocument.querySelector('p'));
+    liveFrame.contentWindow.getSelection().addRange(range);
+    await fallback('Selected text');
+    liveFrame.contentWindow.getSelection().removeAllRanges();
+    liveFrame.contentWindow.CSS.highlights.set('native-fixture', new liveFrame.contentWindow.Highlight(range));
+    await fallback('Highlighted text');
+    liveFrame.contentWindow.CSS.highlights.delete('native-fixture');
+    first.node.querySelector('article').classList.remove('is-original-reader');
+    await fallback('Other reader article');
+    first.node.querySelector('article').classList.add('is-original-reader');
+    liveFrame.dataset.originalReady = 'false';
+    const unready = await snapshotPageCurlLeaves([first], captureOptions);
+    check(unready[0].status === 'rejected', 'Unready iframe must not produce a blank successful snapshot');
+    liveFrame.dataset.originalReady = 'true';
+    check(nativeRequests.length === 1, 'Native capture must skip interactive or non-original leaves');
+    let rejectedCalls = 0;
+    window.viewerAPI.captureEpubCurl = async () => { rejectedCalls += 1; throw new Error('Unavailable rasterizer'); };
+    await fallback('Rejected native capture');
+    check(rejectedCalls === 1, 'The bridge rejection path was not exercised');
+    delete window.viewerAPI;
+    await fallback('Missing native bridge');
+    const plainDocument = new Promise(resolve => liveFrame.addEventListener('load', resolve, { once: true }));
+    liveFrame.srcdoc = nativeDocument.replace(/@font-face[{][^}]+[}]/, '');
+    await plainDocument;
+    let plainCalls = 0;
+    window.viewerAPI = { captureEpubCurl: async () => { plainCalls += 1; throw new Error('Unexpected font-free capture'); } };
+    await fallback('Font-free document');
+    check(plainCalls === 0, 'Font-free documents should retain the renderer path');
+    delete window.viewerAPI;
+    nativeLeaves.forEach(leaf => leaf.node.remove());
+    expectReleased('Native and fallback snapshots must release all transient canvases');
+}
+async function verifyOptimizedEpubSnapshots() {
+    const sheet = document.createElement('style');
+    sheet.textContent = '@font-face{font-family:PublisherBatang;src:url("bookmanager-document://session/sample/asset/publisher.ttf")}'
+        + '@font-face{font-family:Jua;src:url("' + fontUrlFromFace({ filename: 'Jua-Regular.ttf' }) + '")}'
+        + '.optimized-fixture .viewer-text-page{background:#f1ede2;color:#182534;box-sizing:border-box;width:100%;height:100%;margin:0;display:flex;flex-direction:column;padding:14px 17px 12px;overflow:hidden;line-height:1.4;font:17px/1.4 Jua}'
+        + '.optimized-fixture h2{font:19px/1.3 Jua;margin:0 0 8px;color:#542620}.optimized-fixture p{font:16px/1.4 publisherbatang;letter-spacing:.4px;margin:3px 0 7px;text-indent:8px}'
+        + '.optimized-fixture footer{font:13px Jua;color:#135144;text-align:right}.optimized-fixture mark{background:#ffe28d;color:#182534}';
+    document.head.append(sheet);
+    const nodes = [];
+    const requests = [];
+    for (const index of [0, 1]) {
+        const node = document.createElement('div');
+        node.className = 'optimized-fixture';
+        const zoom = index ? 1.25 : 1;
+        node.style.cssText = 'position:fixed;left:' + (20 + index * 260) + 'px;top:20px;z-index:10020;width:200px;height:216px;transform-origin:0 0;transform:scale(' + zoom + ')';
+        node.innerHTML = '<article class="viewer-text-page viewer-reader-scope is-epub-reader"><div class="viewer-reader-page-body"><h2>성호사설 ' + (index + 1)
+            + '</h2><div class="viewer-reader-html-block"><p>우리 책의 <mark>강조한 문장</mark>입니다.</p><p style="text-align:right">본문이 여러 줄로 이어집니다. 두 번째 줄도 확인합니다.</p></div></div><footer>페이지 ' + (index + 25) + '</footer></article>';
+        document.body.append(node);
+        nodes.push(node);
+        requests.push({ node, width: 200, height: 216, x: index * 200, pixelRatio: zoom });
+    }
+    await Promise.all([document.fonts.load('19px Jua', '성호'), document.fonts.load('16px publisherbatang', '본문')]);
+    await document.fonts.ready;
+    await frames();
+    const screen = new Image();
+    screen.src = await window.pageCurlFixture.capture(); await screen.decode();
+    const reference = document.createElement('canvas');
+    reference.width = innerWidth; reference.height = innerHeight;
+    reference.getContext('2d').drawImage(screen, 0, 0, innerWidth, innerHeight);
+    nodes[1].style.visibility = 'hidden';
+    nodes[1].style.opacity = '0';
+    let nativeCalls = 0;
+    let nativeError;
+    window.viewerAPI = { captureEpubCurl: async request => {
+        nativeCalls += 1;
+        try {
+            check(request.sessionId === 'sample' && request.pages.length === 2, 'Optimized spreads must use their active EPUB session');
+            const markup = request.documents.map(item => item.html).join('');
+            check(markup.includes('bookmanager-document://session/sample/asset/publisher.ttf') && markup.includes('/bundled-font/Jua-Regular.ttf'), 'Optimized source lost its publisher or bundled font URL');
+            check(markup.includes('강조한 문장') && markup.includes('페이지 26'), 'Optimized source lost marked content or the page number');
+            return await window.pageCurlFixture.raster(request);
+        }
+        catch (error) { nativeError = error; throw error; }
+    } };
+    const options = { epubSessionId: 'sample' };
+    const snapshots = await snapshotPageCurlLeaves(requests, options);
+    check(!nativeError && nativeCalls === 1 && snapshots.every(item => item.status === 'fulfilled'), 'Native optimized composition did not complete: ' + (nativeError || nativeCalls));
+    const glyphCoverage = [];
+    for (const [index, item] of snapshots.entries()) {
+        const { image, frame } = item.value;
+        const rect = nodes[index].getBoundingClientRect();
+        check(image.width === rect.width && image.height === rect.height && frame.x === index * 200, 'Optimized leaf size, scale or side changed');
+        const expected = reference.getContext('2d').getImageData(rect.left, rect.top, rect.width, rect.height).data;
+        const actual = image.getContext('2d').getImageData(0, 0, image.width, image.height).data;
+        check([241,237,226,255].every((n, k) => Math.abs(actual[k] - n) <= 2), 'Optimized paper color differs from the visible page');
+        for (const element of nodes[index].querySelectorAll('h2, p, footer')) {
+            const box = element.getBoundingClientRect();
+            let intersection = 0, union = 0;
+            for (let y = Math.max(0, Math.floor(box.top - rect.top)); y < Math.min(image.height, Math.ceil(box.bottom - rect.top)); y++) {
+                for (let x = Math.max(0, Math.floor(box.left - rect.left)); x < Math.min(image.width, Math.ceil(box.right - rect.left)); x++) {
+                    const p = 4 * (y * image.width + x);
+                    const wasInk = expected[p] < 155 && expected[p + 1] < 155 && expected[p + 2] < 155;
+                    const isInk = actual[p] < 155 && actual[p + 1] < 155 && actual[p + 2] < 155 && actual[p + 3] > 128;
+                    union += Number(wasInk || isInk); intersection += Number(wasInk && isInk);
+                }
+            }
+            glyphCoverage.push({ leaf: index, element: element.tagName, overlap: Number((intersection / union).toFixed(3)) });
+            check(union > 25 && intersection / union > (index ? 0.64 : 0.9), 'Optimized typography differs on leaf ' + index + ' ' + element.tagName + ': ' + intersection + '/' + union);
+        }
+    }
+    reference.width = reference.height = 0;
+    releasePageCurlSnapshots(snapshots.map(item => item.value));
+    const first = nodes[0], article = first.querySelector('article');
+    const fallback = async message => {
+        const [snapshot] = await snapshotPageCurlLeaves([requests[0]], options);
+        check(snapshot.status === 'fulfilled', message + ' must preserve the SVG renderer: ' + snapshot.reason);
+        releasePageCurlSnapshots([snapshot.value]);
+    };
+    const media = document.createElement('div'); media.className = 'viewer-epub-inline-media'; article.append(media);
+    await fallback('Active inline media'); media.remove();
+    const range = document.createRange(); range.selectNodeContents(article.querySelector('p'));
+    window.getSelection().addRange(range); await fallback('Active text selection'); window.getSelection().removeAllRanges();
+    check(nativeCalls === 1, 'Interactive optimized pages must stay on the renderer path');
+    window.viewerAPI.captureEpubCurl = async () => { nativeCalls += 1; throw new Error('Native surface unavailable'); };
+    await fallback('Native rejection'); check(nativeCalls === 2, 'Optimized bridge rejection not exercised');
+    delete window.viewerAPI; await fallback('No bridge');
+    nodes.forEach(node => node.remove()); sheet.remove();
+    expectReleased('Optimized native and fallback captures must release their canvases');
+    return glyphCoverage;
 }
 window.testDone = (async () => {
     applyMotionPreference('full');
@@ -471,9 +674,35 @@ window.testDone = (async () => {
     catch { rejectedMissingResource = true; }
     window.fetch = nativeFetch;
     check(rejectedMissingResource, 'Unavailable embedded assets must use the DOM fallback instead of losing the publisher artwork');
+    const plainLoaded = new Promise(resolve => embeddedFrame.addEventListener('load', resolve, { once: true }));
+    embeddedLeaf.style.cssText += ';position:fixed;z-index:10000';
+    embeddedFrame.style.transform = 'none';
+    embeddedFrame.srcdoc = '<html><head><style data-original-layout>html{width:240px;height:320px;column-width:240px;column-gap:0;column-fill:auto;overflow:hidden}body{margin:0;background:white}html{background:white}p{box-sizing:border-box;margin:0;padding:5px;height:80px;background:#1463ac;color:white;font:18px serif}p:nth-child(odd){background:#6a348c}</style></head><body>' + '<p>본문 123</p>'.repeat(640) + '</body></html>';
+    await plainLoaded;
+    const source = embeddedFrame.contentDocument;
+    source.documentElement.scrollLeft = 157 * 240;
+    await frames();
+    const textSnapshot = await snapshotPageCurlLeaf(embeddedLeaf, { width: 240, height: 320 });
+    const chapterContext = textSnapshot.image.getContext('2d');
+    const samplePoints = [{ x: 100, y: 40 }, { x: 25, y: 120 }, { x: 100, y: 200 }, { x: 25, y: 280 }];
+    const actualColors = await screenPixels(samplePoints);
+    samplePoints.forEach(({ x, y }, index) => {
+        const pixel = chapterContext.getImageData(x, y, 1, 1).data;
+        const expected = index % 2 === 0 ? [106, 52, 140] : [20, 99, 172];
+        check(pixel[3] === 255 && expected.every((value, channel) => Math.abs(pixel[channel] - value) <= 2 && Math.abs(pixel[channel] - actualColors[index][channel]) <= 2),
+            'The curl must match the displayed late column and its publisher CSS: ' + pixel + ' vs ' + actualColors[index]);
+    });
+    const glyphs = chapterContext.getImageData(5, 5, 100, 32).data;
+    check(glyphs.some((value, offset) => offset % 4 === 0 && value > 180), 'Plain chapter glyphs must be visible in the curl');
+    releasePageCurlSnapshots([textSnapshot]);
     embeddedLeaf.remove();
     expectReleased('Embedded EPUB snapshots must release all temporary canvas backing stores');
     results.push('original EPUB iframe text and current column snapshots');
+
+    await verifyNativeEpubSnapshots();
+    results.push('native original EPUB capture eligibility, columns, scaled composition and renderer fallback');
+    const optimizedGlyphCoverage = await verifyOptimizedEpubSnapshots();
+    results.push('native optimized EPUB glyph coverage, layout, highlight and styled header/footer');
 
     for (const mode of ['optimized', 'original']) {
         const mediaChapter = {
@@ -561,6 +790,21 @@ window.testDone = (async () => {
     expectReleased('Single-page completion must release its snapshots');
     results.push('single-page animation');
 
+    const renderLongLeaf = index => <div key={index} data-flipbook-index={index}><span>Page {index}</span></div>;
+    renderBook({ spread: true, startPage: 10000, preparedPage: 10000, pageCount: 12000, renderLeaf: renderLongLeaf }, 'long', null);
+    await until(() => visibleIndexes().join(',') === '10000,10001', 'Long book did not restore the distant spread');
+    check(book().querySelectorAll('[data-flipbook-index]').length <= 8, 'Long books must only mount current and nearby leaves');
+    api().turnToPage(11800);
+    await until(() => visibleIndexes().join(',') === '11800,11801', 'Jump to an unmounted spread lost the absolute page index');
+    const openSpread = [...book().querySelectorAll('[data-curl-visible="true"]')];
+    renderBook({ pageCount: 13000, indexRevision: 'complete', preparedPage: 11900,
+        renderLeaf: index => <div key={index - 100} data-flipbook-index={index}><span>Page {index - 100}</span></div>,
+    }, 'long', null);
+    await until(() => visibleIndexes().join(',') === '11900,11901', 'Page numbers were not updated after the full book was measured');
+    check(openSpread.every((node, slot) => node.isConnected && node.dataset.flipbookIndex === String(11900 + slot)),
+        'Renumbering the current spread must keep the displayed leaves mounted');
+    renderBook({ spread: false, startPage: 2, preparedPage: 2, pageCount: undefined, renderLeaf: undefined }, 'single-again');
+    await until(() => visibleIndexes().join(',') === '2', 'Did not restore single-page fixture');
     renderBook({ preparedPage: 3 }, 'single');
     await frames();
     api().flip(3);
@@ -572,7 +816,7 @@ window.testDone = (async () => {
     expectReleased('Unmount must release every temporary canvas backing store');
     check(document.querySelector('.viewer-page-curl-canvas') === null, 'Unmount must remove the animation canvas');
     results.push('unmount cancels animation and releases canvases');
-    return { results, changes, initialPixels, readerGlyphPixels, transientCanvasCount: transientCanvases().length };
+    return { results, changes, initialPixels, readerGlyphPixels, optimizedGlyphCoverage, transientCanvasCount: transientCanvases().length };
 })();
 `);
         await fs.writeFile(path.join(directory, 'index.html'), '<style>body { margin: 0; } .fixture-leaf { background: #fff; color: #111; display: flex; flex-direction: column; } .fixture-selectable-text { display: block; font: 18px sans-serif; user-select: text; }</style><div id="root"></div><script type="module" src="/fixture.jsx"></script>');
@@ -585,7 +829,7 @@ window.testDone = (async () => {
                 react: path.join(projectRoot, 'node_modules/react'),
                 'react-dom': path.join(projectRoot, 'node_modules/react-dom'),
             } },
-            server: { host: '127.0.0.1', port: 0, strictPort: true, fs: { allow: [directory, projectRoot] } },
+            server: { host: '127.0.0.1', fs: { allow: [directory, projectRoot] } },
         });
         await server.listen();
         const address = server.httpServer.address();
@@ -593,15 +837,28 @@ window.testDone = (async () => {
         const fixtureUrl = `http://127.0.0.1:${address.port}/`;
         await fs.writeFile(path.join(directory, 'preload.cjs'), `
 const { contextBridge, ipcRenderer } = require('electron');
-contextBridge.exposeInMainWorld('pageCurlFixture', { capture: () => ipcRenderer.invoke('page-curl-fixture:capture') });
+contextBridge.exposeInMainWorld('pageCurlFixture', {
+    capture: () => ipcRenderer.invoke('page-curl-fixture:capture'),
+    raster: request => ipcRenderer.invoke('page-curl-fixture:raster', request),
+});
 `);
         await fs.writeFile(path.join(directory, 'main.cjs'), `
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol } = require('electron');
+const fs = require('node:fs/promises');
+protocol.registerSchemesAsPrivileged([{ scheme: 'bookmanager-document', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 app.setPath('userData', ${JSON.stringify(path.join(directory, 'profile'))});
 app.disableHardwareAcceleration();
 app.whenReady().then(async () => {
+    const { createEpubCurlSurface } = await import(${JSON.stringify(pathToFileURL(path.join(projectRoot, 'electron/viewerCurlSurface.js')).href)});
+    const font = await fs.readFile(${JSON.stringify(path.join(projectRoot, 'src/fonts/NanumGothic-Bold.ttf'))});
+    const bookFont = 'bookmanager-document://session/sample/asset/publisher.ttf';
+    const manager = { getDocumentAssetFromRequest: async url => url === bookFont ? { buffer: font, mime: 'font/ttf' } : null };
+    const surface = createEpubCurlSurface(manager);
     const window = new BrowserWindow({ show: false, width: 1000, height: 760, webPreferences: { backgroundThrottling: false, preload: ${JSON.stringify(path.join(directory, 'preload.cjs'))} } });
     window.webContents.session.protocol.handle('https', () => new Response('<html><body>Test video<script>parent.postMessage("media-fixture-loaded", "*")</script></body></html>', { headers: { 'Content-Type': 'text/html' } }));
+    window.webContents.session.protocol.handle('bookmanager-document', request => request.url === bookFont
+        ? new Response(font, { headers: { 'Content-Type': 'font/ttf', 'Access-Control-Allow-Origin': '*' } }) : new Response(null, { status: 404 }));
+    ipcMain.handle('page-curl-fixture:raster', (_event, { sessionId, documents, pages }) => surface.capture(sessionId, documents, pages));
     ipcMain.handle('page-curl-fixture:capture', async () => (await window.webContents.capturePage()).toDataURL());
     window.webContents.on('console-message', (_event, level, message) => {
         if (level >= 2) process.stderr.write(message + '\\n');
@@ -610,6 +867,7 @@ app.whenReady().then(async () => {
         await window.loadURL(${JSON.stringify(fixtureUrl)});
         const result = await window.webContents.executeJavaScript('(async () => { const deadline = Date.now() + 10000; while (!window.testDone && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20)); if (!window.testDone) throw new Error("Page curl fixture failed to load"); return window.testDone; })()');
         process.stdout.write('PAGE_CURL_RESULT=' + JSON.stringify(result) + '\\n');
+        surface.dispose();
         app.exit(0);
     } catch (error) {
         process.stderr.write(String(error.stack || error));
@@ -633,7 +891,7 @@ app.whenReady().then(async () => {
         const payload = result.output.match(/PAGE_CURL_RESULT=(.+)/)?.[1];
         assert.ok(payload, result.output);
         const report = JSON.parse(payload);
-        assert.equal(report.results.length, 15);
+        assert.equal(report.results.length, 17);
         assert.ok(report.transientCanvasCount > 1, 'The renderer must exercise actual snapshot allocation');
         t.diagnostic(payload);
     } finally {

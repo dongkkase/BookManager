@@ -24,16 +24,18 @@ import MenuSurface from './components/MenuSurface';
 import { CoverArtwork } from './components/CoverArtwork';
 import { AudiobookViewer } from './components/viewer/AudiobookViewer';
 import { ViewerScrollOptions, ViewerScrollPopover } from './components/viewer/ViewerScrollControls';
-import EpubOriginalDocument from './components/viewer/EpubOriginalDocument';
+import EpubOriginalDocument, { canMeasureEpubTextTogether, EpubTextMeasurementFrame } from './components/viewer/EpubOriginalDocument';
+import EpubSlideThumbWindow from './components/viewer/EpubSlideThumbWindow';
 import EpubInlineMedia from './components/viewer/EpubInlineMedia';
 import { EpubAudioControls } from './components/viewer/EpubAudioControls';
 import { mapEpubAudioTracks } from './epubAudioContext';
+import { loadViewerEpub } from './loadViewerEpub';
 import { epubAudioBlockNodes, separateEpubAudioBlockImages, sliceEpubAudioBlock } from './epubAudioPagination';
 import { useEpubAudioContext } from './useEpubAudioContext';
 import { useEpubAudioPlayback } from './useEpubAudioPlayback';
 import { restoreEpubOriginalScrollPosition } from './epubOriginalScrollRestore';
 import { captureComicScrollPosition, normalizeComicScrollPosition, restoreComicScrollPosition } from './viewerComicScrollPosition';
-import { buildOriginalEpubPages, captureEpubReadingPosition, resolveEpubReadingPosition } from './epubOriginalPagination';
+import { buildEpubOpeningPages, buildOriginalEpubPages, captureEpubReadingPosition, epubOpeningChapters, resolveEpubReadingPosition } from './epubOriginalPagination';
 import { normalizeScrollSettings } from './viewerScroll';
 import { useViewerScroll } from './useViewerScroll';
 import { normalizeViewerFlowMode, resolveViewerFlowMode, textPageOffsets, textPageIndexAtOffset, webtoonZoomForWidth, webtoonWidthReference, webtoonPageSize } from './viewerAutoFlow';
@@ -1092,6 +1094,9 @@ function ViewerFlipBook({
   absoluteNavigationKey = 0,
   visualScale = 1,
   renderKey,
+  epubPageSet,
+  epubSessionId,
+  leafKey,
   provideNearbyPageState = false,
   initialRenderLoading = false,
   renderAmbientPage,
@@ -1149,9 +1154,10 @@ function ViewerFlipBook({
   const [displayedBookIndex, setDisplayedBookIndex] = useState(() => currentBookIndex);
   const pageStateBookKeyRef = useRef(bookKey);
   const pageStateMountKeyRef = useRef(flipBookMountKey);
+  const previousPageSet = useRef(epubPageSet);
   const pageStateMountKeyChanged = pageStateMountKeyRef.current !== flipBookMountKey;
   const pageStateBookKeyChanged = pageStateBookKeyRef.current !== bookKey;
-  const preservedDisplayedSourceIndex = pageStateBookKeyChanged
+  const preservedDisplayedSourceIndex = pageStateBookKeyChanged || previousPageSet.current !== epubPageSet
     ? currentSourceIndex
     : clamp(
       Number(displayedSourceIndexRef.current) || 0,
@@ -1173,12 +1179,18 @@ function ViewerFlipBook({
     initialBookIndexRef.current = remappedDisplayedBookIndex;
   }
   useLayoutEffect(() => {
+    if (previousPageSet.current !== epubPageSet) {
+        dragTargetBookIndexRef.current = null;
+        setDragTargetBookIndex(null);
+        absoluteTargetBookIndexRef.current = null;
+    }
     pageStateBookKeyRef.current = bookKey;
     pageStateMountKeyRef.current = flipBookMountKey;
+    previousPageSet.current = epubPageSet;
     displayedSourceIndexRef.current = preservedDisplayedSourceIndex;
     setAmbientBookIndex(remappedDisplayedBookIndex);
     setDisplayedBookIndex(remappedDisplayedBookIndex);
-  }, [flipBookMountKey]);
+  }, [epubPageSet, flipBookMountKey]);
   const bookPixelWidth = normalizedPageSize.width * (spread ? 2 : 1);
   const bookPixelHeight = normalizedPageSize.height;
   const scaledBookPixelWidth = bookPixelWidth * normalizedVisualScale;
@@ -1445,9 +1457,11 @@ function ViewerFlipBook({
     pdfAmbient,
     handlePdfAmbientReady,
   ]);
-  const pageElements = useMemo(() => model.entries.map(entry => (
+  const renderBookLeaf = useCallback(index => {
+    const entry = model.entries[index];
+    return (
     <div
-      key={`flipbook-page-${entry.bookIndex}-${entry.sourceIndex ?? 'blank'}`}
+      key={leafKey?.(entry) ?? `flipbook-page-${entry.bookIndex}-${entry.sourceIndex ?? 'blank'}`}
       className={viewerClassName(
         'viewer-flipbook-page',
         pageClassName,
@@ -1465,11 +1479,13 @@ function ViewerFlipBook({
           : <ViewerFlipBookPageContent entry={entry} />}
       </div>
     </div>
-  )), [
+    );
+  }, [
     model.entries,
     pageClassName,
+    leafKey,
   ]);
-  if (normalizedPageCount <= 0 || pageElements.length < 1) return null;
+  if (normalizedPageCount <= 0 || !model.entries.length) return null;
   return (
     <div
       ref={stageRef}
@@ -1488,22 +1504,25 @@ function ViewerFlipBook({
         <ViewerFlipBookPageRenderContext.Provider value={pageRenderState}>
           <ViewerPageCurlBook
             ref={flipBookRef}
-            key={flipBookMountKey}
+            key={epubPageSet ? bookKey : flipBookMountKey}
+            indexRevision={epubPageSet}
+            epubSessionId={epubSessionId}
+            initialRenderLoading={initialRenderLoading}
             className="viewer-flipbook"
             style={bookStyle}
             width={normalizedPageSize.width}
             height={normalizedPageSize.height}
             startPage={initialBookIndexRef.current}
             preparedPage={currentBookIndex}
+            pageCount={model.entries.length}
+            renderLeaf={renderBookLeaf}
             duration={BOOK_PAGE_TURN_DURATION}
             spread={spread}
             onPageChange={handlePageChange}
             canStartDrag={canStartDrag}
             onTurnStart={handleDragTurnStart}
             onTurnCancel={handleDragTurnCancel}
-          >
-            {pageElements}
-          </ViewerPageCurlBook>
+          />
         </ViewerFlipBookPageRenderContext.Provider>
       </div>
     </div>
@@ -5051,14 +5070,14 @@ function ComicSlideThumb({ items = [], pageLabel, ariaPageLabel, active, navigat
   );
 }
 
-function ReaderSlideThumb({ items = [], pageLabel, ariaPageLabel, active, onClick }) {
+function ReaderSlideThumb({ items = [], pageLabel, ariaPageLabel, active, onClick, centerOnActive = true }) {
   const itemRef = useRef(null);
   const isSpread = items.length > 1;
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !centerOnActive) return;
     itemRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
-  }, [active]);
+  }, [active, centerOnActive]);
 
   return (
     <button
@@ -5109,6 +5128,7 @@ function ViewerNavigationPanel({
   onTabChange,
   tocItems,
   activeTocId,
+  exactPageNumbers,
   highlights,
   searchResults,
   searchLoading,
@@ -5137,7 +5157,7 @@ function ViewerNavigationPanel({
     );
   };
   return (
-    <aside className={`viewer-navigation-panel ${open ? 'is-open' : ''}`} aria-hidden={!open}>
+    <aside className={`viewer-navigation-panel ${open ? 'is-open' : ''}`} aria-hidden={!open} inert={open ? undefined : ''}>
       <div className="viewer-navigation-header">
         <div className="viewer-navigation-thumb">
           <CoverArtwork src={thumbnailSrc} />
@@ -5199,7 +5219,7 @@ function ViewerNavigationPanel({
               onClick={() => onTocClick(item)}
             >
               <span>{item.title}</span>
-              <small>{Number(item.pageIndex) + 1}p</small>
+              {exactPageNumbers && <small>{Number(item.pageIndex) + 1}p</small>}
             </button>
           )) : <div className="viewer-navigation-empty">{viewerText('viewer.navigation.empty_toc', '목차가 없습니다.')}</div>
         )}
@@ -5213,7 +5233,7 @@ function ViewerNavigationPanel({
                     )}
                   {highlight.snippet || highlight.text}
                 </span>
-                <small>{Number(highlight.pageIndex) + 1}p</small>
+                {exactPageNumbers && <small>{Number(highlight.pageIndex) + 1}p</small>}
               </button>
               <button
                 type="button"
@@ -5246,6 +5266,10 @@ function ViewerNavigationPanel({
     </aside>
   );
 }
+
+// Keep the closed panel's scroll position without updating every TOC row on page turns.
+const MemoizedViewerNavigationPanel = React.memo(ViewerNavigationPanel, (previous, next) =>
+    !previous.open && !next.open && previous.session === next.session);
 
 function ComicScrollPngPage(props) {
     const retainedSource = useRef('');
@@ -6072,6 +6096,9 @@ function ViewerApp() {
     const [epubTtsActive, setEpubTtsActive] = useState(false);
     const [readingTtsPlaying, setReadingTtsPlaying] = useState(false);
     const [epubOriginalLayoutState, setEpubOriginalLayoutState] = useState({ key: '', layouts: {} });
+    const [epubOpeningState, setEpubOpeningState] = useState(null);
+    const pendingEpubJumpRef = useRef(null);
+    const pendingEpubSearchRef = useRef(null);
     const epubPositionPendingRef = useRef(null);
     const epubStablePositionRef = useRef(null);
     const epubOriginalScrollRestoreRef = useRef({ cancel: null, position: null, generation: 0 });
@@ -6084,6 +6111,7 @@ function ViewerApp() {
     const previousFlowPositionRef = useRef(null);
     const [scrollSettings, setScrollSettings] = useState(() => normalizeScrollSettings());
     const [ttsMenuOpen, setTtsMenuOpen] = useState(false);
+    const [ttsRequested, setTtsRequested] = useState(false);
   const [viewMode, setViewMode] = useState('fit');
   const [zoom, setZoom] = useState(100);
   const zoomStep = session?.type === 'comic' ? COMIC_ZOOM_STEP : ZOOM_STEP;
@@ -6358,25 +6386,63 @@ function ViewerApp() {
     const epubOriginalLayouts = useMemo(() => epubOriginalLayoutState.key === epubOriginalLayoutKey
         ? epubOriginalLayoutState.layouts : {}, [epubOriginalLayoutState, epubOriginalLayoutKey]);
     const epubOriginalReady = flowMode === 'scroll' || epubChapters.every(chapter => epubOriginalLayouts[chapter.name]);
+    const openingGroup = useMemo(() => isOriginalEpub && flowMode !== 'scroll' && epubOpeningState?.sessionId === session?.id
+        ? epubOpeningChapters(epubChapters, epubOpeningState.state) : null, [epubChapters, epubOpeningState, flowMode, isOriginalEpub, session?.id]);
+    const openingLayoutA = epubOriginalLayouts[openingGroup?.chapters[0]?.name];
+    const openingLayoutB = epubOriginalLayouts[openingGroup?.chapters[1]?.name];
+    const openingLayoutC = epubOriginalLayouts[openingGroup?.chapters[2]?.name];
+    const openingPages = useMemo(() => {
+        const layouts = [openingLayoutA, openingLayoutB, openingLayoutC];
+        return buildEpubOpeningPages(openingGroup, Object.fromEntries((openingGroup?.chapters || []).map((chapter, index) => [chapter.name, layouts[index]])), flowMode === 'spread');
+    }, [openingGroup, openingLayoutA, openingLayoutB, openingLayoutC, flowMode]);
+    const readingOpeningPages = !epubOriginalReady && openingPages.length > 0;
+    const deferEpubJump = useCallback((action, value) => {
+        if (!readingOpeningPages) return false;
+        pendingEpubJumpRef.current = { sessionId: session.id, action, value };
+        return true;
+    }, [readingOpeningPages, session]);
+    useEffect(() => {
+        if (isOriginalEpub && epubOriginalReady) setEpubOpeningState(null);
+    }, [isOriginalEpub, epubOriginalReady]);
+    const originalMeasurementGroups = useMemo(() => {
+        const text = [];
+        const other = [];
+        if (isOriginalEpub && flowMode !== 'scroll' && epubChapters.length > 32) {
+            for (const chapter of epubChapters) {
+                if (!openingGroup?.chapters.includes(chapter) && canMeasureEpubTextTogether(chapter)) text.push(chapter);
+                else other.push(chapter);
+            }
+        }
+        return { text, other: text.length ? other : epubChapters };
+    }, [epubChapters, isOriginalEpub, flowMode, openingGroup]);
+    const textMeasurementDone = epubOriginalLayoutState.key === epubOriginalLayoutKey && epubOriginalLayoutState.textMeasured;
+    const recordOriginalTextLayouts = useCallback(layouts => {
+        setEpubOriginalLayoutState(current => ({
+            key: epubOriginalLayoutKey,
+            layouts: { ...(current.key === epubOriginalLayoutKey ? current.layouts : {}), ...layouts },
+            textMeasured: true,
+        }));
+    }, [epubOriginalLayoutKey]);
     const recordOriginalLayout = useCallback((name, layout) => {
         setEpubOriginalLayoutState(current => {
             const layouts = current.key === epubOriginalLayoutKey ? current.layouts : {};
             if (layouts[name]) return current;
-            return { key: epubOriginalLayoutKey, layouts: { ...layouts, [name]: layout } };
+            return { key: epubOriginalLayoutKey, layouts: { ...layouts, [name]: layout },
+                textMeasured: current.key === epubOriginalLayoutKey && current.textMeasured };
         });
     }, [epubOriginalLayoutKey]);
   const textPages = useMemo(() => paginateText(textContent, readerPageMetrics), [readerPageMetrics, textContent]);
     const textOffsets = useMemo(() => textPageOffsets(textPages), [textPages]);
   const textReaderItems = useMemo(() => textPages.map(text => ({ text })), [textPages]);
   const estimatedEpubPages = useMemo(() => (
-    epubChapters.flatMap((chapter, chapterIndex) => chapter.originalOnly ? [] : paginateReaderChapter({
+    isOriginalEpub ? [] : epubChapters.flatMap((chapter, chapterIndex) => chapter.originalOnly ? [] : paginateReaderChapter({
       ...chapter,
       chapterIndex,
     }, {
       ...readerPageMetrics,
       titleLines: readerSettings.showHeader ? (viewMode === 'height' ? 2 : 1) : 0,
     }))
-  ), [epubChapters, readerPageMetrics, readerSettings.showHeader, viewMode]);
+  ), [epubChapters, isOriginalEpub, readerPageMetrics, readerSettings.showHeader, viewMode]);
   const epubMeasurementBlocks = useMemo(
     () => readerMeasureBlocksFromPages(estimatedEpubPages),
     [estimatedEpubPages],
@@ -6429,8 +6495,21 @@ function ViewerApp() {
   const epubMeasurementReady = measuredEpubPagination?.key === epubMeasurementKey
     && Array.isArray(measuredEpubPagination.pages)
     && measuredEpubPagination.pages.length > 0;
-    const originalEpubPages = useMemo(() => buildOriginalEpubPages(epubChapters, epubOriginalLayouts, { scroll: flowMode === 'scroll' }), [epubChapters, epubOriginalLayouts, flowMode]);
-    const epubPages = isOriginalEpub ? originalEpubPages : epubMeasurementReady ? measuredEpubPagination.pages : estimatedEpubPages;
+    const readyOriginalLayouts = epubOriginalReady ? epubOriginalLayouts : null;
+    const originalEpubPages = useMemo(() => isOriginalEpub
+        ? buildOriginalEpubPages(epubChapters, readyOriginalLayouts, { scroll: flowMode === 'scroll' })
+        : [], [isOriginalEpub, epubChapters, readyOriginalLayouts, flowMode]);
+    const epubPages = isOriginalEpub ? (readingOpeningPages ? openingPages : originalEpubPages) : epubMeasurementReady ? measuredEpubPagination.pages : estimatedEpubPages;
+    const previousOpening = epubStablePositionRef.current;
+    if (epubOriginalReady && isOriginalEpub && previousOpening?.openingLayoutKey === epubOriginalLayoutKey
+        && previousOpening.flowMode === flowMode && previousOpening.position && previousOpening.pageIndex === pageIndex
+        && !epubPositionPendingRef.current) {
+        // Reconcile before rendering children so the first full spread never mounts at the temporary ordinal.
+        const resolved = resolveEpubReadingPosition(epubPages, previousOpening.position);
+        const target = flowMode === 'spread' ? Math.floor(resolved / 2) * 2 : resolved;
+        if (pageIndex !== target) setPageIndex(target);
+        if (selectedPageIndex !== resolved) setSelectedPageIndex(resolved);
+    }
     const captureCurrentEpubPosition = useCallback(targetIndex => {
         const position = captureEpubReadingPosition(epubPages, targetIndex);
         if (!position || !isOriginalEpub || flowMode !== 'scroll') return position;
@@ -6446,7 +6525,7 @@ function ViewerApp() {
     }, [epubPages, flowMode, isOriginalEpub]);
     const readerHighlights = useMemo(() => session?.type === 'epub' ? highlights.map(highlight => highlight.epubPosition
         ? { ...highlight, pageIndex: resolveEpubReadingPosition(epubPages, highlight.epubPosition) } : highlight) : highlights, [epubPages, highlights, session?.type]);
-    const epubLayoutReady = isOriginalEpub ? epubOriginalReady : flowMode === 'scroll' || epubMeasurementBlocks.length === 0 || epubMeasurementReady;
+    const epubLayoutReady = isOriginalEpub ? epubOriginalReady || readingOpeningPages : flowMode === 'scroll' || epubMeasurementBlocks.length === 0 || epubMeasurementReady;
   const epubPageIndexByTarget = useMemo(() => {
     const pageIndexByTarget = new Map();
     epubPages.forEach((page, index) => {
@@ -6504,7 +6583,7 @@ function ViewerApp() {
         if (epubAudioPlayer.currentTrack?.id === trackId && ['playing', 'loading'].includes(epubAudioPlayer.status)) epubAudioPlayer.pause();
         else epubAudioPlayer.playTrack(trackId);
     };
-    const epubActiveLayoutKey = `${isOriginalEpub ? epubOriginalLayoutKey : epubMeasurementKey}:${readerSettings.epubStyle}:${flowMode}`;
+    const epubActiveLayoutKey = `${isOriginalEpub ? epubOriginalLayoutKey : epubMeasurementKey}:${readerSettings.epubStyle}:${flowMode}:${readingOpeningPages ? openingGroup.start : 'all'}`;
     useLayoutEffect(() => {
         if (session?.type !== 'epub' || loading || !readiveResumeReady) return;
         const previous = epubStablePositionRef.current;
@@ -6555,6 +6634,7 @@ function ViewerApp() {
             key: epubActiveLayoutKey,
             pageIndex,
             selectedPageIndex,
+            openingLayoutKey: readingOpeningPages ? epubOriginalLayoutKey : null,
             position: epubOriginalScrollRestoreRef.current.position
                 || (selectedFlowMode === 'auto' && (pending?.position
                     || (previous?.key === epubActiveLayoutKey && previous.pageIndex === pageIndex
@@ -6564,7 +6644,7 @@ function ViewerApp() {
             flowMode,
             scrollPercent,
         };
-    }, [captureCurrentEpubPosition, epubActiveLayoutKey, epubLayoutReady, epubPages, flowMode, isOriginalEpub, loading, pageIndex, readiveResumeReady, scrollPercent, selectedFlowMode, selectedPageIndex, session, setPageIndexSynced]);
+    }, [captureCurrentEpubPosition, epubActiveLayoutKey, epubLayoutReady, epubOriginalLayoutKey, epubPages, flowMode, isOriginalEpub, loading, pageIndex, readingOpeningPages, readiveResumeReady, scrollPercent, selectedFlowMode, selectedPageIndex, session, setPageIndexSynced]);
     useEffect(() => () => {
         const restore = epubOriginalScrollRestoreRef.current;
         restore.generation += 1;
@@ -6649,7 +6729,8 @@ function ViewerApp() {
     session,
     viewerSessionResolved,
   ]);
-    const ttsPageTexts = useMemo(() => prepareSupertonicPages(flowItems.map(readerItemTtsText)), [flowItems]);
+    const prepareReaderSpeech = session?.type !== 'epub' || ((ttsRequested || ttsMenuOpen) && epubLayoutReady);
+    const ttsPageTexts = useMemo(() => prepareReaderSpeech ? prepareSupertonicPages(flowItems.map(readerItemTtsText)) : [], [flowItems, prepareReaderSpeech]);
     const ttsPageTextAt = useCallback(targetPageIndex => {
         const indexes = flowMode === 'spread' ? [targetPageIndex, targetPageIndex + 1] : [targetPageIndex];
         return indexes
@@ -6659,7 +6740,7 @@ function ViewerApp() {
             .join('\n\n').trim();
     }, [flowItems, flowMode, ttsPageTexts]);
   const ttsPageWindow = useMemo(() => {
-    if (!isReaderDocument || flowItems.length < 1) return [];
+    if (!isReaderDocument || !ttsPageTexts.length) return [];
     const pageStep = flowMode === 'spread' ? 2 : 1;
     const speakablePages = [{ pageIndex, text: ttsPageTextAt(pageIndex) }];
     for (
@@ -6672,11 +6753,11 @@ function ViewerApp() {
       speakablePages.push({ pageIndex: targetPageIndex, text });
     }
     return speakablePages;
-  }, [flowItems, flowMode, isReaderDocument, pageIndex, ttsPageTextAt]);
+  }, [flowItems, flowMode, isReaderDocument, pageIndex, ttsPageTextAt, ttsPageTexts]);
   const currentTtsText = ttsPageWindow[0]?.text || '';
   const ttsPrefetchPages = useMemo(() => ttsPageWindow.slice(1), [ttsPageWindow]);
     const ttsPreviousPages = useMemo(() => {
-        if (!isReaderDocument || flowItems.length < 1) return [];
+        if (!isReaderDocument || !ttsPageTexts.length) return [];
         const pageStep = flowMode === 'spread' ? 2 : 1;
         const previousPages = [];
         for (
@@ -6688,7 +6769,7 @@ function ViewerApp() {
             if (text) previousPages.push({ pageIndex: targetPageIndex, text });
         }
         return previousPages;
-    }, [flowItems, flowMode, isReaderDocument, pageIndex, ttsPageTextAt]);
+    }, [flowItems, flowMode, isReaderDocument, pageIndex, ttsPageTextAt, ttsPageTexts]);
   const currentPercent = flowMode === 'scroll'
     ? Math.round(scrollPercent)
     : pageCount > 0
@@ -6696,10 +6777,11 @@ function ViewerApp() {
       : 0;
   const progressText = useMemo(() => {
     if (!session) return '';
+    if (session.type === 'epub' && (!epubLayoutReady || readingOpeningPages)) return 'EPUB';
     if (session.type === 'pdf') return pdfPageCount > 0 ? `${pageIndex + 1} / ${pdfPageCount} · PDF` : 'PDF';
     if (flowMode === 'scroll') return `${currentPercent}%`;
     return pageCount > 0 ? `${pageIndex + 1} / ${pageCount} · ${currentPercent}%` : session.type.toUpperCase();
-  }, [currentPercent, flowMode, pageCount, pageIndex, pdfPageCount, session]);
+  }, [currentPercent, epubLayoutReady, flowMode, pageCount, pageIndex, pdfPageCount, readingOpeningPages, session]);
   const hasPreviousBook = Boolean(session?.adjacent?.hasPrevious);
   const hasNextBook = Boolean(session?.adjacent?.hasNext);
   const comicSinglePageNameSet = useMemo(() => new Set(comicSinglePageNames), [comicSinglePageNames]);
@@ -7093,6 +7175,12 @@ function ViewerApp() {
     };
     saveJson(viewerPrefsKey(session), viewerPrefs);
     if (epubOriginalScrollRestoreRef.current.position || session.preview) return;
+    if (readingOpeningPages) {
+        const key = storageKey(session, 'state');
+        const previous = readJson(key, {}, readingLibraryPathsRef.current);
+        saveJson(key, { ...previous, updatedAt: fileState.updatedAt, epubPosition: fileState.epubPosition }, readingLibraryPathsRef.current);
+        return;
+    }
     saveJson(storageKey(session, 'state'), fileState, readingLibraryPathsRef.current);
     window.viewerAPI?.saveReadingState?.(session.id, {
       format: session.type,
@@ -7102,7 +7190,7 @@ function ViewerApp() {
     }).catch(error => {
       console.warn('읽기 상태 저장 실패:', error);
     });
-  }, [autoScrolling, captureCurrentEpubPosition, flowMode, loading, pageCount, pageCountReadyForNavigation, pageIndex, readerSettings, readingDirection, readiveResumeReady, scrollPercent, scrollSettings, selectedFlowMode, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom]);
+  }, [autoScrolling, captureCurrentEpubPosition, flowMode, loading, pageCount, pageCountReadyForNavigation, pageIndex, readerSettings, readingDirection, readingOpeningPages, readiveResumeReady, scrollPercent, scrollSettings, selectedFlowMode, session, slideNavOpen, spreadCoverFirst, viewMode, viewerBackground, zoom]);
 
   const persistScrollState = useCallback((nextScrollPercent, nextPageIndex) => {
     if (!session || flowMode !== 'scroll' || !readiveResumeReady || epubPositionPendingRef.current || epubOriginalScrollRestoreRef.current.position) return;
@@ -7366,8 +7454,13 @@ function ViewerApp() {
 
   const triggerReaderPageEffect = useCallback((targetIndex, currentIndex = pageIndex, onComplete) => {
     if (!isReaderDocument) return false;
+    if (isOriginalEpub && readerSettings.pageEffect === 'none' && !pageTurnPendingRef.current
+        && epubPages[targetIndex]?.originalChapter === epubPages[currentIndex]?.originalChapter
+        && (flowMode !== 'spread' || epubPages[targetIndex + 1]?.originalChapter === epubPages[currentIndex + 1]?.originalChapter)) {
+        return false;
+    }
     return triggerTimedPageEffect('reader', targetIndex, currentIndex, onComplete);
-  }, [isReaderDocument, pageIndex, triggerTimedPageEffect]);
+  }, [epubPages, flowMode, isOriginalEpub, isReaderDocument, pageIndex, readerSettings.pageEffect, triggerTimedPageEffect]);
 
   const triggerComicPageEffect = useCallback((targetIndex, currentIndex = pageIndex, onComplete) => {
     if (session?.type !== 'comic') return false;
@@ -7512,7 +7605,7 @@ function ViewerApp() {
   useEffect(() => {
     clearPageTurnRuntime();
     setPageTurn(current => current.active ? { ...EMPTY_PAGE_TURN, sequence: current.sequence } : current);
-  }, [clearPageTurnRuntime, flowMode, readerSettings.pageEffect, readerSettings.epubStyle, readerSettings.epubOriginalTheme, readerSettings.epubOriginalVerticalPadding, readerSettings.epubOriginalHorizontalPadding, readingDirection, session?.type, viewMode]);
+  }, [clearPageTurnRuntime, flowMode, readerSettings.pageEffect, readerSettings.epubStyle, readerSettings.epubOriginalTheme, readerSettings.epubOriginalVerticalPadding, readerSettings.epubOriginalHorizontalPadding, readingDirection, readingOpeningPages, session?.type, viewMode]);
 
     const detectViewerWebtoon = useCallback(async (targetSession, comicPages) => {
         const entry = webtoonDetectionRef.current;
@@ -7577,9 +7670,12 @@ function ViewerApp() {
     clearDocumentFrame();
     setTextContent('');
     setEpubChapters([]);
+    setTtsRequested(false);
     setEpubOriginalLayoutState({ key: '', layouts: {} });
     epubPositionPendingRef.current = null;
     epubStablePositionRef.current = null;
+    pendingEpubJumpRef.current = null;
+    pendingEpubSearchRef.current = null;
     setEpubToc([]);
     setEpubMetadata({});
     setEpubStylesheet('');
@@ -7621,6 +7717,7 @@ function ViewerApp() {
         const savedFileState = mergeReadiveResumeState(localFileState, remoteFileState);
         if (savedFileState !== localFileState && nextSession.type === 'epub') delete savedFileState.epubPosition;
         setReadiveResumePending({ sessionId: nextSession.id, state: savedFileState });
+    setEpubOpeningState(nextSession.type === 'epub' ? { sessionId: nextSession.id, state: savedFileState } : null);
     const savedViewerPrefs = readJson(viewerPrefsKey(nextSession), {});
     const savedPrefs = { ...savedFileState, ...savedViewerPrefs };
     const savedPageIndex = Math.max(0, Number(savedFileState.pageIndex) || 0);
@@ -7677,7 +7774,7 @@ function ViewerApp() {
         setPdfPageCount(loadedPdfDocument.numPages);
         setPageIndexSynced(initialPageIndex);
       } else if (nextSession.type === 'epub') {
-        const result = await window.viewerAPI.getEpubText(nextSession.id);
+        const result = await loadViewerEpub(window.viewerAPI, nextSession.id, isCurrentLoad);
         if (!isCurrentLoad()) return;
         const epubFontNames = uniqueFontNames(Array.isArray(result.fonts) ? result.fonts : []);
         setFontGroups(current => normalizeFontGroups({ ...current, epub: epubFontNames }));
@@ -7799,6 +7896,7 @@ function ViewerApp() {
   }, [loadSession]);
 
   useEffect(() => () => {
+    loadSequenceRef.current += 1;
     clearPageTurnRuntime();
     if (viewerToastTimerRef.current) {
       window.clearTimeout(viewerToastTimerRef.current);
@@ -8072,10 +8170,10 @@ function ViewerApp() {
   ]);
 
   useEffect(() => {
-    if (pageCountReadyForNavigation && pageIndex >= pageCount) {
+    if ((!readingOpeningPages || readiveResumeReady) && pageCountReadyForNavigation && pageIndex >= pageCount) {
       setPageIndexSynced(pageCount - 1);
     }
-  }, [pageCount, pageCountReadyForNavigation, pageIndex, setPageIndexSynced]);
+  }, [pageCount, pageCountReadyForNavigation, pageIndex, readingOpeningPages, readiveResumeReady, setPageIndexSynced]);
 
     useLayoutEffect(() => {
         if (selectionMenu?.kind !== 'text-selection') return undefined;
@@ -8243,6 +8341,7 @@ function ViewerApp() {
   useLayoutEffect(() => {
     if (!['comic', 'pdf', 'epub', 'text'].includes(session?.type)) return;
     if (!pageCountReadyForNavigation) return;
+    if (session.type === 'epub' && !readiveResumeReady) return;
         if (session.type === 'epub' && epubPositionPendingRef.current) return;
         if (session.type === 'text' && !loading && readiveResumeReady) {
             const previous = textLayoutPositionRef.current;
@@ -8292,6 +8391,14 @@ function ViewerApp() {
     comicScrollRestoreRef.current?.cancel?.();
         if (bookPageDragActiveRef.current) return;
     const currentIndex = clamp(pageIndexRef.current, 0, Math.max(0, pageCount - 1));
+    if (readingOpeningPages) {
+        pendingEpubJumpRef.current = null;
+        if ((delta < 0 && currentIndex === 0 && openingGroup.start > 0)
+            || (delta > 0 && isForwardBoundaryIndex(currentIndex) && openingGroup.start + openingGroup.chapters.length < epubChapters.length)) {
+            deferEpubJump('step', delta);
+            return;
+        }
+    }
     if (delta > 0 && pageCount > 0 && flowMode !== 'scroll' && isForwardBoundaryIndex(currentIndex)) {
       moveAdjacentBook(1);
       return;
@@ -8346,7 +8453,7 @@ function ViewerApp() {
       || triggerComicPageEffect(nextIndex, currentIndex, commitPageIndex);
     if (deferred) return;
     commitPageIndex();
-  }, [flowMode, getStepSizeForIndex, goPdfPage, hasNextBook, isForwardBoundaryIndex, moveAdjacentBook, pageCount, resetPageModeScroll, scrollByKeyboard, selectedFlowMode, session?.type, setPageIndexSynced, showNextBookHint, triggerComicPageEffect, triggerReaderPageEffect]);
+  }, [deferEpubJump, epubChapters.length, flowMode, getStepSizeForIndex, goPdfPage, hasNextBook, isForwardBoundaryIndex, moveAdjacentBook, openingGroup, pageCount, readingOpeningPages, resetPageModeScroll, scrollByKeyboard, selectedFlowMode, session?.type, setPageIndexSynced, showNextBookHint, triggerComicPageEffect, triggerReaderPageEffect]);
 
   const handleFlipBookPageIndexChange = useCallback(nextIndex => {
     if (flowMode === 'scroll' || pageCount <= 0) return;
@@ -8411,7 +8518,7 @@ function ViewerApp() {
         )[0] || session.fileName;
     const bookmark = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      pageIndex: bookmarkPageIndex,
+      ...(!readingOpeningPages ? { pageIndex: bookmarkPageIndex } : {}),
       ...(session.type === 'epub' ? { epubPosition: captureCurrentEpubPosition(bookmarkPageIndex) } : {}),
       ...(comicScrollPosition ? { comicScrollPosition } : {}),
       scrollPercent,
@@ -8424,7 +8531,7 @@ function ViewerApp() {
     const next = [bookmark, ...bookmarks].slice(0, 30);
     setBookmarks(next);
     saveJson(storageKey(session, 'bookmarks'), next);
-  }, [bookmarks, captureCurrentEpubPosition, epubPages, flowMode, pageCount, pageIndex, pages, scrollPercent, selectedFlowMode, session, textPages]);
+  }, [bookmarks, captureCurrentEpubPosition, epubPages, flowMode, pageCount, pageIndex, pages, readingOpeningPages, scrollPercent, selectedFlowMode, session, textPages]);
 
   const deleteBookmark = id => {
     if (!session) return;
@@ -8440,6 +8547,7 @@ function ViewerApp() {
   };
 
   const goBookmark = bookmark => {
+    if (deferEpubJump('bookmark', bookmark)) return;
     comicScrollRestoreRef.current?.cancel?.();
     cancelMotion();
         resetScrollZoomOffset();
@@ -8502,7 +8610,7 @@ function ViewerApp() {
             ?? pageIndexByChapterIndex.get(item.chapterIndex),
           depth: item.depth || 0,
         }))
-        .filter(item => Number.isInteger(item.pageIndex));
+        .filter(item => readingOpeningPages || Number.isInteger(item.pageIndex));
     }
     if (session?.type === 'text') {
       return textPages
@@ -8520,7 +8628,7 @@ function ViewerApp() {
         .slice(0, 80);
     }
     return [];
-  }, [epubChapters, epubPageIndexByTarget, epubPages, epubToc, pdfToc, session?.type, textPages]);
+  }, [epubChapters, epubPageIndexByTarget, epubPages, epubToc, pdfToc, readingOpeningPages, session?.type, textPages]);
 
   const activeTocId = useMemo(() => {
     if (tocItems.length === 0) return '';
@@ -8554,8 +8662,14 @@ function ViewerApp() {
     setBookSearchQuery(trimmedQuery);
     setNavigationTab('search');
     setActiveSearch(null);
+    pendingEpubSearchRef.current = readingOpeningPages && trimmedQuery ? trimmedQuery : null;
+    if (pendingEpubSearchRef.current) {
+        setBookSearchLoading(true);
+        return;
+    }
     if (!trimmedQuery || !session) {
       setBookSearchResults([]);
+      setBookSearchLoading(false);
       return;
     }
     setBookSearchLoading(true);
@@ -8598,7 +8712,7 @@ function ViewerApp() {
     } finally {
       setBookSearchLoading(false);
     }
-  }, [epubPages, pdfDocument, pdfPageCount, session, textReaderItems]);
+  }, [epubPages, pdfDocument, pdfPageCount, readingOpeningPages, session, textReaderItems]);
 
   const goEpubInternalTarget = useCallback(target => {
     if (session?.type !== 'epub' || !target) return;
@@ -8607,6 +8721,7 @@ function ViewerApp() {
     const targetKey = epubTargetKey(entryName, anchor);
     const entryKey = epubTargetKey(entryName, '');
     const resolvedPageIndex = epubPageIndexByTarget.get(targetKey) ?? epubPageIndexByTarget.get(entryKey);
+    if (!Number.isInteger(resolvedPageIndex) && deferEpubJump('link', target)) return;
     if (!Number.isInteger(resolvedPageIndex)) return;
     if (isOriginalEpub && flowMode === 'scroll') scrollRestoreTokenRef.current += 1;
     goPageIndex(resolveSpreadNavigationIndex(resolvedPageIndex), {
@@ -8637,7 +8752,7 @@ function ViewerApp() {
         anchorNode?.scrollIntoView?.({ block: 'start' });
       });
     });
-  }, [epubPageIndexByTarget, flowMode, goPageIndex, isOriginalEpub, resolveSpreadNavigationIndex, session?.type]);
+  }, [deferEpubJump, epubPageIndexByTarget, flowMode, goPageIndex, isOriginalEpub, resolveSpreadNavigationIndex, session?.type]);
 
   const goNavigationPage = useCallback(targetPageIndex => {
     cancelMotion();
@@ -8655,6 +8770,7 @@ function ViewerApp() {
   }, [cancelMotion, goEpubInternalTarget, goPageIndex, pageCount, resolveSpreadNavigationIndex, session?.type]);
 
     const goBoundaryPage = useCallback(delta => {
+        if (deferEpubJump('boundary', delta)) return;
         cancelMotion();
         setAbsolutePageJumpSequence(current => current + 1);
         goNavigationPage(delta < 0 ? 0 : Math.max(0, pageCount - 1));
@@ -8664,7 +8780,7 @@ function ViewerApp() {
                 node?.scrollTo?.({ top: delta < 0 ? 0 : node.scrollHeight, left: 0 });
             });
         }
-    }, [cancelMotion, flowMode, goNavigationPage, pageCount]);
+    }, [cancelMotion, deferEpubJump, flowMode, goNavigationPage, pageCount]);
 
   const goSlideNavPage = useCallback(targetPageIndex => {
     cancelMotion();
@@ -8704,7 +8820,7 @@ function ViewerApp() {
     const highlight = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       text: selectionMenu.text,
-      pageIndex: selectionMenu.pageIndex,
+      ...(!readingOpeningPages ? { pageIndex: selectionMenu.pageIndex } : {}),
       ...(session.type === 'epub' ? { epubPosition: { ...captureEpubReadingPosition(epubPages, selectionMenu.pageIndex), textQuote: selectionMenu.text.replace(/\s+/g, '').slice(0, 100) } } : {}),
       snippet: selectionMenu.snippet || selectionMenu.text,
       color: normalizeHighlightColor(color),
@@ -8715,7 +8831,7 @@ function ViewerApp() {
     setNavigationPanelOpen(true);
     setSelectionMenu(null);
     clearNativeSelection();
-  }, [clearNativeSelection, epubPages, highlights, saveHighlights, selectionMenu, session]);
+  }, [clearNativeSelection, epubPages, highlights, readingOpeningPages, saveHighlights, selectionMenu, session]);
 
   const searchBookFromSelection = useCallback(() => {
     const text = selectionQueryText(selectionMenu?.text);
@@ -8767,10 +8883,22 @@ function ViewerApp() {
   }, [highlights, saveHighlights]);
 
   const goHighlight = useCallback(highlight => {
+    if (deferEpubJump('highlight', highlight)) return;
     const targetPageIndex = highlight.epubPosition && session?.type === 'epub' ? resolveEpubReadingPosition(epubPages, highlight.epubPosition) : highlight.pageIndex;
     goNavigationPage(targetPageIndex);
     setActiveSearch({ pageIndex: targetPageIndex, text: highlight.text });
-  }, [epubPages, session?.type, goNavigationPage]);
+  }, [deferEpubJump, epubPages, session?.type, goNavigationPage]);
+
+  useEffect(() => {
+    if (!epubOriginalReady || !readiveResumeReady || epubPositionPendingRef.current) return;
+    const jump = pendingEpubJumpRef.current;
+    pendingEpubJumpRef.current = null;
+    if (jump && jump.sessionId === session?.id) {
+        const actions = { step: movePage, boundary: goBoundaryPage, bookmark: goBookmark, highlight: goHighlight, link: goEpubInternalTarget };
+        actions[jump.action](jump.value);
+    }
+    if (pendingEpubSearchRef.current) void performBookSearch(pendingEpubSearchRef.current);
+  });
 
   const openNavigationSearch = useCallback(() => {
     if (!supportsNavigationPanel) return false;
@@ -10003,9 +10131,16 @@ function ViewerApp() {
   const renderReaderMeasurementStage = () => {
     if (isOriginalEpub) {
         if (flowMode === 'scroll' || epubOriginalReady) return null;
+        const opening = openingGroup && (!readingOpeningPages || initialRenderLoading);
+        const remaining = opening ? openingGroup.chapters : textMeasurementDone ? epubChapters : originalMeasurementGroups.other;
         return (
             <div className="viewer-reader-measure-stage" aria-hidden="true">
-                {epubChapters.filter(chapter => !epubOriginalLayouts[chapter.name]).slice(0, 3).map(chapter => (
+                {!opening && !textMeasurementDone && originalMeasurementGroups.text.length > 0 && <EpubTextMeasurementFrame
+                    key={epubOriginalLayoutKey}
+                    chapters={originalMeasurementGroups.text} pageSize={epubOriginalPageSize}
+                    scale={epubOriginalScale} appearance={epubOriginalAppearance} onComplete={recordOriginalTextLayouts}
+                />}
+                {remaining.filter(chapter => !epubOriginalLayouts[chapter.name]).slice(0, 3).map(chapter => (
                     <EpubOriginalDocument
                         key={`${epubOriginalLayoutKey}:${chapter.name}`}
                         chapter={chapter}
@@ -10077,9 +10212,11 @@ function ViewerApp() {
         </article>
       );
     }
+    const reuseOriginalFrames = isOriginalEpub && (readerSettings.pageEffect === 'none' || reducedMotion)
+        && (!pageTurn.active || pageTurn.effect === 'none');
     const renderReaderArticle = (item, index, sourceIndex, extraClassName = '') => isOriginalEpub ? (
         <article
-            key={`${sourceIndex}-${index}-${extraClassName || 'page'}`}
+            key={reuseOriginalFrames ? `chapter-${item.chapterIndex}-slot-${index}` : `chapter-${item.chapterIndex}-column-${item.originalPageOffset}-${index}-${extraClassName || 'page'}`}
             className={`viewer-text-page is-original-reader ${extraClassName}`.trim()}
             data-reader-page-index={sourceIndex}
             style={{ width: epubOriginalPageSize.width * epubOriginalScale, overflow: item.originalChapter?.original?.layout === 'pre-paginated' ? 'auto' : 'hidden', background: epubOriginalAppearance.theme?.bg }}
@@ -10108,6 +10245,12 @@ function ViewerApp() {
       };
       return (
         <ViewerFlipBook
+          epubPageSet={isOriginalEpub ? (readingOpeningPages ? 'opening' : 'complete') : undefined}
+          epubSessionId={session?.type === 'epub' ? session.id : undefined}
+          leafKey={isOriginalEpub ? entry => {
+              const item = items[entry.sourceIndex];
+              return item ? `${item.chapterIndex}-${item.originalPageOffset}-${entry.side}` : `blank-${entry.side}`;
+          } : undefined}
           bookKey={`reader-${session?.id || session?.filePath || session?.type || 'reader'}-${viewMode}-${readerSettings.fontFamily}-${readerSettings.fontScale}-${isOriginalEpub ? `${epubOriginalLayoutKey}:${readerSettings.epubOriginalTheme}` : 'optimized'}`}
           className={`viewer-reader-stage is-${viewMode}`.trim()}
           pageClassName="is-reader"
@@ -10149,7 +10292,7 @@ function ViewerApp() {
       const renderedPages = layerEntries.map(entry => renderReaderArticle(entry.item, entry.slotIndex, entry.sourceIndex));
       return (
         <div
-          key={`reader-transition-${layer.index}`}
+          key={reuseOriginalFrames ? `reader-chapters-${layerEntries.map(entry => entry.item.chapterIndex).join('-')}` : `reader-transition-${layer.index}`}
           className={viewerClassName(
             'viewer-page-transition-layer',
             `is-${layer.role}`,
@@ -10343,12 +10486,14 @@ function ViewerApp() {
   const tocShortcut = viewerShortcutLabel(['L']);
   const fullscreenShortcut = viewerShortcutLabel(['F11']);
   const fullscreenTitle = `${viewerText('viewer.toolbar.fullscreen', '전체화면 전환')} (${fullscreenShortcut} / Enter)`;
-  const atForwardBoundary = flowMode !== 'scroll' && isForwardBoundaryIndex(pageIndex);
+  const wholeBookStart = !readingOpeningPages || openingGroup.start === 0;
+  const wholeBookEnd = !readingOpeningPages || openingGroup.start + openingGroup.chapters.length === epubChapters.length;
+  const atForwardBoundary = wholeBookEnd && flowMode !== 'scroll' && isForwardBoundaryIndex(pageIndex);
   const previousPageDisabled = flowMode === 'scroll'
     ? pageCount <= 0 || scrollPercent <= 0
     : session?.type === 'pdf'
     ? pageCount <= 0 || pageIndex <= 0
-    : flowMode !== 'scroll' && pageIndex <= 0;
+    : flowMode !== 'scroll' && wholeBookStart && pageIndex <= 0;
   const nextPageDisabled = pageCount <= 0 || (atForwardBoundary && !hasNextBook);
   const toolbarPageDirectionOptions = {
     mode: readerSettings.arrowKeyMode,
@@ -10426,6 +10571,7 @@ function ViewerApp() {
     restoreViewerFocus();
   }, [restoreViewerFocus]);
   const renderSlideThumbs = () => {
+    if (readingOpeningPages) return null;
     if (!slideNavAvailable) return null;
     if (session?.type === 'pdf') {
       const pdfSlideThumbGroups = buildSlideThumbGroups({
@@ -10492,25 +10638,7 @@ function ViewerApp() {
     }
     if (session?.type === 'epub' || session?.type === 'text') {
       const readerItems = session.type === 'epub' ? epubPages : textReaderItems;
-      const startIndex = session.type === 'text'
-        ? Math.max(0, pageIndex - READER_SLIDE_WINDOW_RADIUS)
-        : 0;
-      const endIndex = session.type === 'text'
-        ? Math.min(readerItems.length, pageIndex + READER_SLIDE_WINDOW_RADIUS + 1)
-        : readerItems.length;
-      const visibleIndexes = Array.from(
-        { length: Math.max(0, endIndex - startIndex) },
-        (_, offset) => startIndex + offset,
-      );
-      if (session.type === 'text' && startIndex > 0) visibleIndexes.unshift(0);
-      if (session.type === 'text' && endIndex < readerItems.length) visibleIndexes.push(readerItems.length - 1);
-      const visibleIndexSet = new Set(visibleIndexes);
-      const readerSlideThumbGroups = buildSlideThumbGroups({
-        items: readerItems,
-        spread: flowMode === 'spread',
-        getStepSizeForIndex,
-      }).filter(group => group.pageIndexes.some(index => visibleIndexSet.has(index)));
-      return readerSlideThumbGroups.map(group => {
+      const renderGroup = group => {
         const pageLabel = slideThumbPageLabel(group.pageIndexes);
         const items = group.pageIndexes.map((index, itemIndex) => ({
           item: group.items[itemIndex],
@@ -10524,10 +10652,22 @@ function ViewerApp() {
             pageLabel={pageLabel}
             ariaPageLabel={pageLabel}
             active={group.pageIndexes.includes(pageIndex)}
+            centerOnActive={session.type !== 'epub'}
             onClick={runToolbarAction(() => goSlideNavPage(group.groupStartIndex))}
           />
         );
-      });
+      };
+      if (session.type === 'epub') {
+          return <EpubSlideThumbWindow items={readerItems} spread={flowMode === 'spread'} pageIndex={pageIndex} renderGroup={renderGroup} />;
+      }
+      const startIndex = Math.max(0, pageIndex - READER_SLIDE_WINDOW_RADIUS);
+      const endIndex = Math.min(readerItems.length, pageIndex + READER_SLIDE_WINDOW_RADIUS + 1);
+      const readerSlideThumbGroups = buildSlideThumbGroups({
+          items: readerItems,
+          spread: flowMode === 'spread',
+          getStepSizeForIndex,
+      }).filter(group => group.pageIndexes.some(index => index === 0 || index === readerItems.length - 1 || (index >= startIndex && index < endIndex)));
+      return readerSlideThumbGroups.map(renderGroup);
     }
     return null;
   };
@@ -10716,6 +10856,7 @@ function ViewerApp() {
                 onReadingPlaybackChange={setReadingTtsPlaying}
                 onMenuOpenChange={setTtsMenuOpen}
                 onMenuOpen={() => {
+                    setTtsRequested(true);
                     cancelMotion();
                 }}
               />
@@ -10924,7 +11065,7 @@ function ViewerApp() {
         </div>
       )}
       {supportsNavigationPanel && (
-        <ViewerNavigationPanel
+        <MemoizedViewerNavigationPanel
           open={navigationPanelOpen}
           session={session}
           thumbnailSrc={navigationThumbnailSrc}
@@ -10937,7 +11078,8 @@ function ViewerApp() {
           onTabChange={setNavigationTab}
           tocItems={tocItems}
           activeTocId={activeTocId}
-          highlights={highlights}
+          exactPageNumbers={!readingOpeningPages}
+          highlights={session?.type === 'epub' ? readerHighlights : highlights}
           searchResults={bookSearchResults}
           searchLoading={bookSearchLoading}
           onClose={runToolbarAction(() => setNavigationPanelOpen(false))}

@@ -8,6 +8,7 @@ import {
     resolveAudiobookCloseAction,
 } from './audiobookClosePolicy.js';
 import { ViewerSessionManager } from './viewerSessions.js';
+import { createEpubCurlSurface } from './viewerCurlSurface.js';
 import { epubAssetResponseData } from './epubAudio.js';
 import { normalizeExternalUrl } from './externalUrlPolicy.js';
 import { audioSessionMatchesSuccessfulPath } from './audioViewerMetadataRefresh.js';
@@ -17,6 +18,7 @@ import { getReadiveReadingState } from './readive/ipc.js';
 import { createCoverEditViewerGuard } from './coverEditViewerGuard.js';
 import { installEditorMediaHeaders } from './epubEditor/mediaHeaders.js';
 import { observeOperation } from './observabilityOperations.js';
+import { isTelemetrySenderAllowed as isLocalRendererFrame } from './observabilityIpc.js';
 import { reportTelemetryError } from './telemetry.js';
 import { setupViewerTtsTelemetry } from './viewerTelemetry.js';
 import { isExpectedProcessExit } from './processSafety.js';
@@ -308,6 +310,7 @@ export function setupViewerWindowManager(options = {}) {
     const setContextSession = (context, session, options = {}) => {
         if (!context || !session) return;
         if (context.currentSession?.id !== session.id) {
+            context.epubCurlSurface?.reset();
             sessions.cancelComicSession(context.currentSession?.id);
             context.epubRequestController?.abort();
             context.epubRequestController = null;
@@ -633,6 +636,8 @@ export function setupViewerWindowManager(options = {}) {
         });
         viewerWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
             if (context.window !== viewerWindow || !isMainFrame || isInPlace) return;
+            context.epubCurlSurface?.reset();
+            context.epubRequestController?.abort();
             sessions.cancelComicSession(context.currentSession?.id);
             sessions.cancelComicSession(context.pendingSession?.id);
         });
@@ -661,7 +666,11 @@ export function setupViewerWindowManager(options = {}) {
         }
         viewerWindow.webContents.on('render-process-gone', (_event, details) => {
             const currentWindow = context.window === viewerWindow;
-            if (currentWindow) sessions.cancelComicSession(context.currentSession?.id);
+            if (currentWindow) {
+                context.epubCurlSurface?.reset();
+                context.epubRequestController?.abort();
+                sessions.cancelComicSession(context.currentSession?.id);
+            }
             const shuttingDown = !currentWindow || isShuttingDown() || context.closingWindows.has(viewerWindow);
             if (!isExpectedProcessExit(details, { isShuttingDown: shuttingDown })) {
                 reportTelemetryError(details, {
@@ -688,6 +697,8 @@ export function setupViewerWindowManager(options = {}) {
         viewerWindow.on('closed', () => {
             context.closingWindows.delete(viewerWindow);
             if (context.window !== viewerWindow) return;
+            context.epubCurlSurface?.dispose();
+            context.epubCurlSurface = null;
             sessions.cancelComicSession(context.currentSession?.id);
             sessions.cancelComicSession(context.pendingSession?.id);
             context.epubRequestController?.abort();
@@ -940,13 +951,16 @@ export function setupViewerWindowManager(options = {}) {
         viewerContextForSessionRequest(event, sessionId);
         return sessions.getText(sessionId, options);
     });
-    ipcMain.handle('viewer:getEpubText', async (event, sessionId) => {
+    ipcMain.handle('viewer:getEpubText', async (event, sessionId, packed = false) => {
         const context = viewerContextForCurrentSessionRequest(event, sessionId);
+        if (!isLocalRendererFrame(event, { distIndexPath, devServerUrl: isDev ? devServerUrl : '' })) {
+            throw new Error('EPUB data is only available to the viewer main frame.');
+        }
         context.epubRequestController?.abort();
         const controller = new AbortController();
         context.epubRequestController = controller;
         try {
-            return await sessions.getEpubText(sessionId, { signal: controller.signal });
+            return await sessions.getEpubText(sessionId, { signal: controller.signal, packed: packed === true });
         } finally {
             if (context.epubRequestController === controller) context.epubRequestController = null;
         }
@@ -957,6 +971,15 @@ export function setupViewerWindowManager(options = {}) {
         if (session.preview || configManager?.canPruneLibraryData?.()
             && !isRegisteredLibraryFile(session.filePath, configManager.getConfig()?.libraries)) return null;
         return getReadiveReadingState(session.filePath);
+    });
+    ipcMain.handle('viewer:captureEpubCurl', async (event, request = {}) => {
+        const { sessionId, documents, pages } = request;
+        const context = viewerContextForCurrentSessionRequest(event, sessionId);
+        if (context.currentSession.type !== 'epub' || !isLocalRendererFrame(event, { distIndexPath, devServerUrl: isDev ? devServerUrl : '' })) {
+            throw new Error('EPUB capture is only available to the viewer main frame.');
+        }
+        context.epubCurlSurface ||= createEpubCurlSurface(sessions);
+        return context.epubCurlSurface.capture(sessionId, documents, pages);
     });
     ipcMain.handle('viewer:saveReadingState', async (event, sessionId, state = {}) => {
         const context = viewerContextForSender(event.sender);
@@ -1101,6 +1124,8 @@ export function setupViewerWindowManager(options = {}) {
             || activeViewerWindow(viewerContexts.audio)
         ),
         prepareForAppQuit: () => {
+            viewerContexts.reader.epubCurlSurface?.dispose();
+            viewerContexts.reader.epubCurlSurface = null;
             const context = viewerContexts.audio;
             context.allowClose = true;
             context.closeRequestVersion += 1;

@@ -52,6 +52,7 @@ const constants = [
 const pageWindows = Function('epubTtsText', 'prepareSupertonicPages', 'flowItems', 'pageIndex', 'flowMode', 'isReaderDocument', `
     const useCallback = callback => callback;
     const useMemo = callback => callback();
+    const prepareReaderSpeech = true;
     ${constants}
     ${textFunctions}
     ${section('function readerItemTtsText(', 'function getPageEffectDirection(')}

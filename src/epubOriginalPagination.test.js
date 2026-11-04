@@ -1,10 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+    buildEpubOpeningPages,
     buildOriginalEpubPages,
     captureEpubReadingPosition,
+    epubOpeningChapters,
     resolveEpubReadingPosition,
 } from './epubOriginalPagination.js';
+
+test('early spreads keep semantic positions, including a partially shown preceding chapter', () => {
+    const chapters = Array.from({ length: 45 }, (_, index) => ({ name: 'part-' + index }));
+    const layouts = Object.fromEntries(chapters.map(item => [item.name, { pageCount: 3, textByPage: ['aa', 'bbbb', 'cccccc'] }]));
+    assert.equal(epubOpeningChapters(chapters, { pageIndex: 105 }), null);
+    assert.equal(epubOpeningChapters(chapters, { readiveLocator: { kind: 'normalized', normalizedPosition: 0.8 } }), null);
+    const all = buildOriginalEpubPages(chapters, layouts);
+    const position = captureEpubReadingPosition(all, 108);
+    const group = epubOpeningChapters(chapters, { pageIndex: 108, epubPosition: position });
+    assert.deepEqual(buildEpubOpeningPages(group, {}, true), []);
+    const early = buildEpubOpeningPages(group, layouts, true);
+    assert.equal(resolveEpubReadingPosition(early, position) % 2, 0);
+    assert.equal(early[0].originalPageOffset, 1);
+    early.forEach((entry, index) => {
+        const finalIndex = entry.chapterIndex * 3 + entry.originalPageOffset;
+        assert.deepEqual(captureEpubReadingPosition(early, index), captureEpubReadingPosition(all, finalIndex));
+        assert.equal(resolveEpubReadingPosition(early, captureEpubReadingPosition(all, finalIndex)), index);
+    });
+});
 
 test('measured chapters expose only each displayed page text and anchors', () => {
     const chapter = { name: 'chapter.xhtml', title: 'Chapter', text: 'first second third', blocks: [{ text: 'whole chapter' }] };

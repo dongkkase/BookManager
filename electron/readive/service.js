@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import https from 'node:https';
 import { createSelfSignedCertificate } from '../servers/sharingServers.js';
 import { ReadiveStore } from './store.js';
-import { fail, isOnLink, listReadiveInterfaces, transferSizePolicy } from './policy.js';
+import { fail, isAllowedReadivePeer, listReadiveInterfaces, transferSizePolicy } from './policy.js';
 import { openFrozenAsset, publicSnapshot, resolveFrozenAssetHash, scanReadivePaths, selectSnapshotEntries, summarizeEntries } from './manifest.js';
 import { exchangeReading, getImportedReadingState, readingRowSignature } from './reading.js';
 import { exchangeReadingActivity } from './readingActivity.js';
@@ -602,8 +602,10 @@ export class ReadiveService {
     }
 
     validateSource(remoteAddress, localAddress) {
-        const current = this.interfaces().find(item => item.address === this.localInterface?.address && item.netmask === this.localInterface?.netmask);
-        if (!current || localAddress !== current.address || !isOnLink(remoteAddress, current)) throw fail('lan_only', 403);
+        const selected = this.localInterface;
+        const current = selected && this.interfaces().find(item => item.name === selected.name
+            && item.address === selected.address && item.netmask === selected.netmask && item.kind === selected.kind);
+        if (!current || localAddress !== current.address || !isAllowedReadivePeer(remoteAddress, current)) throw fail('lan_only', 403);
     }
 
     async recordRatingChange(filePath, previousStat) {

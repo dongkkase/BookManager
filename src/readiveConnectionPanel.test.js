@@ -71,7 +71,7 @@ async function fixture(options = {}) {
     let renderer;
     let component;
     let tree;
-    const props = { t: key => key, variant: options.variant ?? 'sharing', attentionRequest: options.attentionRequest ?? null, isActive: options.isActive ?? true };
+    const props = { t: key => key, variant: options.variant ?? 'sharing', attentionRequest: options.attentionRequest ?? null, isActive: options.isActive ?? true, config: options.config, saveConfig: options.saveConfig };
     const panelElement = {
         scrollIntoView: options => calls.scrolls.push(options),
         focus: () => { calls.focus += 1; },
@@ -80,7 +80,11 @@ async function fixture(options = {}) {
         running: options.running ?? false,
         devices: options.devices ?? [],
         jobs: [],
-        interfaces: [{ name: 'Wi-Fi', address: '192.168.0.2' }, { name: 'Ethernet', address: '192.168.0.3' }],
+        interfaces: [
+            { name: 'Wi-Fi', address: '192.168.0.2' },
+            { name: 'Ethernet', address: '192.168.0.3' },
+            { name: 'utun8', address: '100.80.0.12', kind: 'tailscale' },
+        ],
         address: options.running ? '192.168.0.2' : null,
         port: 27182,
         pairing: options.running ? pairingForSession(session) : null,
@@ -112,6 +116,7 @@ async function fixture(options = {}) {
                 if (options.startGate) await options.startGate;
                 state.running = true;
                 state.address = value.address;
+                state.port = value.port;
                 state.pairing = pairingForSession(session++);
             },
             stopReadiveServer: async () => {
@@ -197,11 +202,14 @@ test('enabling the server displays its QR and disabling removes it without a sep
         assert.equal(value.qr(), undefined);
         assert.equal(value.button('readive.start').props.disabled, false);
         const network = nodes(value.tree()).find(node => node.type === 'select');
-        network.props.onChange({ target: { value: '192.168.0.3' } });
+        assert.equal(network.props.value, '192.168.0.2');
+        const tunnel = nodes(network).find(node => node.type === 'option' && node.props.value === '100.80.0.12');
+        assert.equal(textContent(tunnel), 'utun8 (Tailscale) · 100.80.0.12');
+        network.props.onChange({ target: { value: tunnel.props.value } });
         value.render();
         await value.button('readive.start').props.onClick();
         await value.settle();
-        assert.deepEqual(value.calls.starts, [{ address: '192.168.0.3' }]);
+        assert.deepEqual(value.calls.starts, [{ address: '100.80.0.12', port: 19421 }]);
         assert.equal(value.qr().props.src, value.state.pairing.qrDataUrl);
         assert.equal(value.button('readive.stop').props.disabled, false);
         assert.equal(nodes(value.tree()).find(node => node.type === 'select').props.disabled, true);
@@ -216,6 +224,41 @@ test('enabling the server displays its QR and disabling removes it without a sep
         await value.settle();
         assert.equal(value.qr().props.src, pairingForSession(2).qrDataUrl);
         assert.equal(value.calls.pairings, 0);
+    } finally { value.close(); }
+});
+
+test('manual address and port edits validate the local endpoint, survive polling and start the selected listener', async () => {
+    const config = { readive_address: '192.168.0.3', readive_port: 20100 };
+    const saved = [];
+    const value = await fixture({ config, saveConfig: async updates => saved.push(updates) });
+    const field = id => nodes(value.tree()).find(node => node.props?.id === id);
+    const edit = (id, text) => {
+        field(id).props.onChange({ target: { value: text } });
+        value.render();
+    };
+    try {
+        assert.equal(field('readive-ip').props.value, config.readive_address);
+        assert.equal(field('readive-port').props.value, config.readive_port);
+        edit('readive-interface', '');
+        assert.equal(field('readive-ip').props.value, '');
+        edit('readive-ip', '192.168.0.250');
+        assert.equal(value.button('readive.start').props.disabled, true);
+        edit('readive-ip', '192.168.0.2');
+        assert.equal(field('readive-interface').props.value, '192.168.0.2');
+        for (const port of ['', '1023', '65536', '20200.5']) {
+            edit('readive-port', port);
+            assert.equal(value.button('readive.start').props.disabled, true);
+        }
+        edit('readive-port', '20200');
+        await value.advance(2000);
+        assert.equal(value.button('readive.start').props.disabled, false);
+        await value.button('readive.start').props.onClick();
+        await value.settle();
+        assert.deepEqual(value.calls.starts, [{ address: '192.168.0.2', port: 20200 }]);
+        assert.deepEqual(saved, [{ readive_address: '192.168.0.2', readive_port: 20200 }]);
+        assert.equal(field('readive-ip').props.disabled, true);
+        assert.equal(field('readive-port').props.disabled, true);
+        assert.equal(field('readive-port').props.value, 20200);
     } finally { value.close(); }
 });
 
@@ -396,7 +439,9 @@ test('leaving the sharing tab clears attention and a consumed request does not r
         await value.advance(4000);
         assert.equal(value.hasAttention(), false);
         assert.deepEqual(value.calls.scrolls, []);
+        assert.equal(value.calls.status, 0, 'An inactive sharing tab does not fetch server status');
         await value.updateProps({ isActive: true });
+        assert.equal(value.calls.status, 1, 'Returning to the sharing tab immediately fetches current status');
         await value.advance(32);
         assert.equal(value.hasAttention(), true);
         await value.updateProps({ isActive: false });
@@ -411,7 +456,7 @@ test('leaving the sharing tab clears attention and a consumed request does not r
         await value.advance(4000);
         assert.equal(value.hasAttention(), false, 'Leaving before the next frame must cancel the pending animation');
         assert.equal(value.calls.scrolls.length, 1);
-        assert.equal(value.timers.size, 1, 'Only the status poll remains after cancelling attention');
+        assert.equal(value.timers.size, 0, 'Leaving the sharing tab stops background polling and attention');
     } finally { value.close(); }
 });
 

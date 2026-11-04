@@ -182,12 +182,19 @@ export async function readingListsRequest(library, request = {}, libraryPaths = 
         if (operation === 'list') {
             if (request.id === 'library-catalog') {
                 const scope = createLibraryPathScope(library, libraryPaths, 'files.path');
+                // data_version tracks other connections and total_changes tracks this connection.
+                const catalogVersion = JSON.stringify([
+                    db.pragma('data_version', { simple: true }),
+                    db.prepare('SELECT total_changes()').pluck().get(),
+                    scope.params,
+                ]);
+                if (request.catalogVersion === catalogVersion) return { catalogVersion, unchanged: true };
                 // Catalog cards open books by path; long metadata belongs to the viewer and detail queries.
                 const columns = CATALOG_FILE_COLUMNS.map(column => `files.${column}`).join(', ');
                 const rows = db.prepare(`SELECT ${columns}, COALESCE(activity.added_at, '') AS list_added_at
                     FROM files LEFT JOIN reading_file_activity activity ON activity.path = files.path
                     WHERE ${scope.where} ORDER BY files.path`).all(...scope.params);
-                return { rows: rows.filter(row => readingActionFormat(row.path)) };
+                return { rows: rows.filter(row => readingActionFormat(row.path)), catalogVersion };
             }
             if (['recent-added', 'recent-updated'].includes(request.id)) {
                 const column = request.id === 'recent-added' ? 'added_at' : 'updated_at';
@@ -330,7 +337,8 @@ export function registerReadingListsIpc({ ipcMain, getMainWindow, createLibrary,
             if (result.rows) {
                 // Catalog and recent activity use the DB snapshot; opening a book verifies its original path.
                 const snapshot = ['library-catalog', 'recent-added', 'recent-updated'].includes(request.id);
-                return { success: true, files: await hydrateReadingListRows(result.rows, normalizeFile, {
+                const { rows, ...metadata } = result;
+                return { success: true, ...metadata, files: await hydrateReadingListRows(rows, normalizeFile, {
                     verifyPresence: !snapshot,
                     catalog: request.id === 'library-catalog',
                 }) };

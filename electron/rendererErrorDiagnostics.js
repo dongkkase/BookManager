@@ -36,7 +36,7 @@ const IPC_CHANNELS = new Set([
     'tools:epubEditor', 'tools:epubOptimizer', 'tools:textCleaner:load', 'tools:textCleaner:save',
     'tts:supertonicInstall', 'tts:supertonicStatus',
 
-    'viewer:closeWindow', 'viewer:controlAudioMiniPlayer', 'viewer:getAudioData', 'viewer:getAudioMiniPlayerState',
+    'viewer:captureEpubCurl', 'viewer:closeWindow', 'viewer:controlAudioMiniPlayer', 'viewer:getAudioData', 'viewer:getAudioMiniPlayerState',
     'viewer:getComicPage', 'viewer:getConfig', 'viewer:getCurrentSession', 'viewer:getDocumentData', 'viewer:getEpubText',
     'viewer:getFullscreenState', 'viewer:getReadiveReadingState', 'viewer:getText', 'viewer:listAudioQueue',
     'viewer:listComicPages', 'viewer:open', 'viewer:openAdjacent', 'viewer:openAudioQueueItem', 'viewer:openExternal',

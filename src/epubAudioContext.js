@@ -26,9 +26,10 @@ export function mapEpubAudioTracks(chapters = [], pages = []) {
     const byChapter = new Map();
     const tracks = [];
     for (const chapter of chapters) {
+        if (!chapter.audioTracks?.length) continue;
         const chapterPages = pages.map((page, index) => ({ page, index })).filter(({ page }) => page.name === chapter.name);
         if (!chapterPages.length) continue;
-        for (const track of chapter.audioTracks || []) {
+        for (const track of chapter.audioTracks) {
             if (!track.id || !track.sources?.some(source => source.src)) continue;
             const matches = chapterPages.filter(({ page }) => pageHasAudioAnchor(page, track));
             const pageIndex = matches[0]?.index ?? (track.text

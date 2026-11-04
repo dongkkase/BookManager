@@ -7,6 +7,7 @@ import test from 'node:test';
 import { ViewerSessionManager } from './viewerSessions.js';
 import { replaceZipEntry } from './core/zipArchive.js';
 import { comicRequestAbortedError } from './viewerComicQueue.js';
+import { loadViewerEpub } from '../src/loadViewerEpub.js';
 
 test('메인 문서 새로고침은 이전 만화 요청을 취소하고 같은 세션을 다시 활성화한다', async t => {
     const source = await fs.readFile(new URL('./viewerWindow.js', import.meta.url), 'utf8');
@@ -157,4 +158,32 @@ test('EPUB 장과 이미지의 읽기는 ZIP 목록을 재사용하고 취소 �
         fs.open = originalOpen;
         await fs.rm(root, { recursive: true, force: true });
     }
+});
+
+test('EPUB 워커 전송은 긴 장의 최적화 블록, 원본 문서와 공유 자산을 복원하며 교체된 요청을 취소한다', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'viewer-packed-epub-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const source = path.join(root, 'large.epub');
+    await fs.writeFile(source, Buffer.alloc(0));
+    await replaceZipEntry(source, 'one.xhtml', '<html><body><h1>중간 제목</h1>'
+        + Array.from({ length: 1200 }, (_, index) => `<p id="p${index}">문단 ${index} ${'가나다 '.repeat(16)}</p>`).join('')
+        + '<img src="cover.png"></body></html>');
+    await replaceZipEntry(source, 'two.xhtml', '<html><body><p>마지막 장</p></body></html>');
+    await replaceZipEntry(source, 'cover.png', Buffer.from('fixture'));
+    const manager = new ViewerSessionManager();
+    const session = manager.create(source, { skipAdjacent: true });
+    const direct = await manager.getEpubText(session.id);
+    const actual = await loadViewerEpub({
+        getEpubText: async (id, packed) => {
+            const result = await manager.getEpubText(id, { packed });
+            assert.ok(result.chapterPackets.length > 1);
+            return result;
+        },
+    }, session.id, () => true);
+    assert.deepEqual(actual, JSON.parse(JSON.stringify(direct)));
+    assert.equal(actual.chapters[0].original.resourceUrls, actual.chapters[1].original.resourceUrls);
+    const controller = new AbortController();
+    const loading = manager.getEpubText(session.id, { packed: true, signal: controller.signal });
+    controller.abort();
+    await assert.rejects(loading, { name: 'AbortError' });
 });

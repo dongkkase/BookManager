@@ -4,7 +4,7 @@ import { formatReadiveBytes } from '../readiveTransferPolicy';
 import { isMotionReduced, subscribeMotionPreference } from '../motionPolicy';
 import '../styles/ReadiveTransfer.css';
 
-export function useReadiveStatus() {
+export function useReadiveStatus(isActive = true) {
     const [status, setStatus] = useState({ running: false, devices: [], jobs: [], interfaces: [] });
     const [error, setError] = useState(false);
     const [statusLoaded, setStatusLoaded] = useState(false);
@@ -23,6 +23,10 @@ export function useReadiveStatus() {
         }
     }, []);
     useEffect(() => {
+        if (!isActive) {
+            setStatusLoaded(false);
+            return;
+        }
         let active = true;
         let timer;
         const poll = async () => {
@@ -47,7 +51,7 @@ export function useReadiveStatus() {
             active = false;
             window.clearTimeout(timer);
         };
-    }, []);
+    }, [isActive]);
     return { status, refresh, statusError: error, statusLoaded };
 }
 
@@ -78,10 +82,11 @@ export function ReadiveJobs({ jobs = [], devices = [], t, onCancel, busy = false
     );
 }
 
-export function ReadiveConnectionPanel({ t, showToast, variant = 'default', attentionRequest = null, isActive = true }) {
+export function ReadiveConnectionPanel({ t, config, saveConfig, variant = 'default', attentionRequest = null, isActive = true }) {
     const sharing = variant === 'sharing';
-    const { status, refresh, statusError, statusLoaded } = useReadiveStatus();
-    const [address, setAddress] = useState('');
+    const { status, refresh, statusError, statusLoaded } = useReadiveStatus(isActive);
+    const [address, setAddress] = useState(null);
+    const [port, setPort] = useState(null);
     const panelRef = useRef(null);
     const [busy, setBusy] = useState(false);
     const busyRef = useRef(false);
@@ -91,7 +96,12 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default', atte
     const consumedAttentionRef = useRef(null);
     const attentionCancelRef = useRef(null);
     const interfaces = status.interfaces || [];
-    const selectedAddress = status.running ? status.address : address || interfaces[0]?.address || '';
+    const selectedAddress = status.running ? status.address : address ?? (config?.readive_address || interfaces[0]?.address || '');
+    const selectedPort = status.running ? status.port : port ?? config?.readive_port ?? 19421;
+    const availableAddress = interfaces.some(item => item.address === selectedAddress);
+    const portNumber = Number(selectedPort);
+    const validPort = /^\d+$/.test(selectedPort) && portNumber >= 1024 && portNumber <= 65535;
+    const fieldsDisabled = busy || status.running || !statusLoaded || statusError;
     const pairing = status.running && !statusError ? status.pairing : null;
 
     const stopAttention = useCallback(() => {
@@ -162,6 +172,20 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default', atte
         }
     };
 
+    const toggleConnection = async () => {
+        if (status.running) {
+            await window.electronAPI.stopReadiveServer();
+            return;
+        }
+        await window.electronAPI.startReadiveServer({ address: selectedAddress, port: portNumber });
+        if (config?.readive_address === selectedAddress && config?.readive_port === portNumber) return;
+        try {
+            await saveConfig?.({ readive_address: selectedAddress, readive_port: portNumber });
+        } catch (error) {
+            setError(t('config_save_failed', { msg: error.message }));
+        }
+    };
+
     return (
         <section ref={panelRef} className={sharing ? `sharing-groupbox readive-sharing-panel${attentionVisible ? ' is-connection-attention' : ''}` : 'readive-panel'} aria-labelledby="readive-connection-title">
             <h2 id="readive-connection-title" className={sharing ? 'sharing-groupbox-title' : undefined}>{t('readive.title')}</h2>
@@ -169,17 +193,39 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default', atte
                 <p className={`readive-connection-description${sharing ? ' sharing-desc' : ''}`}>{t('readive.description')}</p>
                 <p className={sharing ? 'sharing-desc' : undefined}>{t('reading_lists.shared_hint')}</p>
                 <div className="readive-connection-toolbar">
-                    <button type="button" className={sharing ? `sharing-btn-toggle${status.running ? ' running' : ''}` : undefined} disabled={busy || !statusLoaded || (!status.running && !selectedAddress)} onClick={() => run(async () => {
-                        if (status.running) {
-                            await window.electronAPI.stopReadiveServer();
-                        } else {
-                            await window.electronAPI.startReadiveServer({ address: selectedAddress });
-                        }
-                    })}>
+                    <label className="readive-network-field" htmlFor="readive-interface">
+                        {t('readive.interface')}
+                        <select id="readive-interface" value={availableAddress ? selectedAddress : ''} disabled={fieldsDisabled || !interfaces.length} onChange={event => setAddress(event.target.value)}>
+                            <option value="">{t(interfaces.length ? 'readive.manual_address' : 'readive.no_interface')}</option>
+                            {interfaces.map(item => (
+                                <option key={item.address} value={item.address}>
+                                    {item.name}{item.kind === 'tailscale' && !/tailscale/i.test(item.name) ? ' (Tailscale)' : ''} · {item.address}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <label className="readive-network-field" htmlFor="readive-ip">
+                        IP
+                        <input id="readive-ip" type="text" spellCheck={false} value={selectedAddress} disabled={fieldsDisabled} onChange={event => setAddress(event.target.value.trim())} />
+                    </label>
+                    <label className="readive-network-field" htmlFor="readive-port">
+                        {t('tab_sharing_port')}
+                        <input id="readive-port" type="number" min={1024} max={65535} value={selectedPort} disabled={fieldsDisabled} onChange={event => setPort(event.target.value)} />
+                    </label>
+                    <button
+                        type="button"
+                        className={sharing ? `sharing-btn-toggle${status.running ? ' running' : ''}` : undefined}
+                        disabled={busy || !statusLoaded || (!status.running && (statusError || !availableAddress || !validPort))}
+                        onClick={() => run(toggleConnection)}
+                    >
                         <FaIcon name={status.running ? 'stopCircle' : 'powerOff'} />
                         {t(busy ? 'tab_sharing_processing' : status.running ? 'readive.stop' : 'readive.start')}
                     </button>
                 </div>
+                {statusLoaded && !statusError && !status.running && !availableAddress && (
+                    <p className="readive-error">{t(interfaces.length ? 'readive.invalid_address' : 'readive.no_interface')}</p>
+                )}
+                {!status.running && !validPort && <p className="readive-error">{t('sharing_invalid_port')}</p>}
                 <div className="readive-connection-layout">
                     <div className="readive-connection-details">
                         <div className="readive-pairing">
@@ -194,22 +240,14 @@ export function ReadiveConnectionPanel({ t, showToast, variant = 'default', atte
                                 </div>
                             )}
                         </div>
-                        {statusLoaded && !statusError && !interfaces.length && !status.running && <p className="readive-error">{t('readive.no_interface')}</p>}
-                        <details className="readive-network-settings">
+                        {status.running && !statusError && <details className="readive-network-settings">
                             <summary>{t('readive.network_settings')}</summary>
                             <div className="readive-network-content">
-                                <div className={`readive-row readive-interface-row${sharing ? ' sharing-field sharing-field-address' : ''}`}>
-                                    <label className={sharing ? 'sharing-label' : undefined} htmlFor="readive-interface">{t('readive.interface')}</label>
-                                    <select id="readive-interface" className={sharing ? 'sharing-input-select' : undefined} value={selectedAddress} disabled={busy || status.running || !statusLoaded} onChange={event => setAddress(event.target.value)}>
-                                        {!interfaces.length && <option value="">{t('readive.no_interface')}</option>}
-                                        {interfaces.map(item => <option key={item.address} value={item.address}>{item.name} · {item.address}</option>)}
-                                    </select>
-                                </div>
-                                {status.running && !statusError && <p className={sharing ? 'sharing-desc' : undefined}>
+                                <p className={sharing ? 'sharing-desc' : undefined}>
                                     {t('readive.manual_instructions', { address: status.address, port: status.port })}
-                                </p>}
+                                </p>
                             </div>
-                        </details>
+                        </details>}
                     </div>
                     <div className="readive-devices">
                         <h3 className={sharing ? 'sharing-label' : undefined}>{t('readive.devices')}</h3>

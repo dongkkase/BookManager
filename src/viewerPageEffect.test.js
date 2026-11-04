@@ -276,7 +276,7 @@ test('플립북 페이지 content는 Context를 통해 갱신된다', () => {
     const contextValueSource = sourceBetween(
         viewerSource,
         '  const pageRenderState = useMemo(() => ({',
-        '  const pageElements = useMemo(',
+        '  const renderBookLeaf = useCallback(',
     );
 
     assert.doesNotMatch(contentSource, /function ViewerFlipBookPageContent\(\{[^}]*renderPage/);
@@ -286,10 +286,10 @@ test('플립북 페이지 content는 Context를 통해 갱신된다', () => {
     assert.match(contextValueSource, /(?:pageRenderDependency|renderKey|contentRevision|contentVersion)/);
 });
 
-test('플립북 pageElements는 구조 변경에만 의존한다', () => {
+test('플립북 페이지 렌더 함수는 구조 변경에만 의존한다', () => {
     const pageElementsSource = sourceBetween(
         viewerSource,
-        '  const pageElements = useMemo(',
+        '  const renderBookLeaf = useCallback(',
         '  if (normalizedPageCount <= 0',
     );
     const dependencyStart = pageElementsSource.lastIndexOf('[');

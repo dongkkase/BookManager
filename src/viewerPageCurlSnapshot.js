@@ -1,3 +1,5 @@
+import { createEpubCurlCapture } from './viewerEpubCurlCapture.js';
+
 function makeCanvas(width, height, pixelRatio) {
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.ceil(width * pixelRatio));
@@ -100,7 +102,10 @@ async function snapshotFontStyles(families, documents = [document]) {
                     reader.onload = () => resolve(reader.result);
                     reader.onerror = reject;
                     reader.readAsDataURL(blob);
-                })).catch(() => null);
+                })).catch(() => {
+                    if (fontDataCache.get(url) === pending) fontDataCache.delete(url);
+                    return null;
+                });
                 fontDataCache.set(url, pending);
                 if (fontDataCache.size > 16) fontDataCache.delete(fontDataCache.keys().next().value);
             }
@@ -112,6 +117,69 @@ async function snapshotFontStyles(families, documents = [document]) {
     }))).join('\n');
 }
 
+function copySnapshotStyle(original, copy) {
+    const computed = original.ownerDocument.defaultView.getComputedStyle(original);
+    copy.style.cssText = Array.from(computed, property => `${property}:${computed.getPropertyValue(property)};`).join('');
+    copy.style.visibility = 'visible';
+    copy.style.animation = 'none';
+    copy.style.transition = 'none';
+    return computed;
+}
+
+function cloneVisibleTextColumn(source, families) {
+    const root = source.documentElement;
+    const body = source.body;
+    if (!source.head.querySelector('style[data-original-layout]') || body.childElementCount < 32 ||
+        body.querySelector(':not(p,h1,h2,h3,h4,h5,h6), :scope > * *')) return null;
+    const rootStyle = source.defaultView.getComputedStyle(root);
+    const bodyStyle = source.defaultView.getComputedStyle(body);
+    const width = root.clientWidth;
+    const height = root.clientHeight;
+    if (rootStyle.writingMode !== 'horizontal-tb' || rootStyle.direction !== 'ltr' ||
+        parseFloat(rootStyle.columnWidth) !== width || parseFloat(rootStyle.columnGap) !== 0 ||
+        [rootStyle, bodyStyle].some(style => style.backgroundImage !== 'none' || style.boxShadow !== 'none' ||
+            style.transform !== 'none' || style.opacity !== '1' || style.filter !== 'none' ||
+            ['Top', 'Right', 'Bottom', 'Left'].some(side => parseFloat(style[`border${side}Width`]) > 0)) ||
+        (bodyStyle.backgroundColor !== 'rgba(0, 0, 0, 0)' && bodyStyle.backgroundColor !== rootStyle.backgroundColor)) return null;
+    const authorStyles = [...source.querySelectorAll('style:not([data-original-layout])')].map(style => style.textContent).join(' ');
+    if (/::?(before|after|first-line|first-letter)|(?:background|border|box-shadow|transform|position|float|column|writing-mode|display)\s*:/i.test(authorStyles)) return null;
+
+    const page = document.createElement('div');
+    page.style.cssText = `position:relative;width:${width}px;height:${height}px;overflow:hidden;background:${rootStyle.backgroundColor}`;
+    for (const node of body.childNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+            if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) return null;
+            continue;
+        }
+        const rects = node.getClientRects();
+        if (![...rects].some(rect => rect.width && rect.height && rect.right > 0 && rect.left < width && rect.bottom > 0 && rect.top < height)) continue;
+        const first = rects[0];
+        const copy = node.cloneNode(true);
+        const style = copySnapshotStyle(node, copy);
+        if (style.display !== 'block' || style.position !== 'static' || style.transform !== 'none' || style.writingMode !== 'horizontal-tb') return null;
+        style.fontFamily.split(',').forEach(family => families.add(family.replace(/["']/g, '').trim().toLowerCase()));
+        Object.assign(copy.style, { boxSizing: 'border-box', margin: '0', width: `${first.width}px` });
+        if (rects.length === 1) {
+            // Position a wrapper so the publisher's logical inset properties cannot override the coordinates.
+            const block = document.createElement('div');
+            block.style.cssText = `position:absolute;left:${first.left}px;top:${first.top}px;width:${first.width}px;height:${first.height}px`;
+            block.append(copy);
+            page.append(block);
+        } else {
+            // Start this paragraph at its actual height in its first column so the browser
+            // wraps the same lines across the page boundary, including widows and orphans.
+            const columns = document.createElement('div');
+            columns.style.cssText = `position:absolute;left:${first.left}px;top:0;width:${first.width}px;height:${height}px;column-width:${first.width}px;column-gap:${width - first.width}px;column-fill:auto`;
+            const spacer = document.createElement('div');
+            spacer.style.height = `${first.top}px`;
+            Object.assign(copy.style, { height: 'auto', breakBefore: 'auto', breakAfter: 'auto' });
+            columns.append(spacer, copy);
+            page.append(columns);
+        }
+    }
+    return page;
+}
+
 function cloneReaderSnapshot(node, families, documents) {
     const clone = node.cloneNode(true);
     const originals = [node, ...node.querySelectorAll('*')];
@@ -121,11 +189,7 @@ function cloneReaderSnapshot(node, families, documents) {
         if (media && media !== original) return;
         const copy = copies[index];
         copy.removeAttribute('data-bookmanager-curl-style');
-        const computed = original.ownerDocument.defaultView.getComputedStyle(original);
-        copy.style.cssText = Array.from(computed, property => `${property}:${computed.getPropertyValue(property)};`).join('');
-        copy.style.visibility = 'visible';
-        copy.style.animation = 'none';
-        copy.style.transition = 'none';
+        const computed = copySnapshotStyle(original, copy);
         if (media === original) {
             // Remote players cannot be copied into a canvas; replace only their snapshot contents.
             const placeholder = document.createElement('div');
@@ -151,15 +215,20 @@ function cloneReaderSnapshot(node, families, documents) {
             const viewport = document.createElement('div');
             viewport.style.cssText = copy.style.cssText;
             viewport.style.overflow = 'hidden';
-            // A cloned document cannot scroll, so move its columns inside the iframe-sized clip.
-            const offset = document.createElement('div');
-            offset.style.transform = `translate(${-sourceDocument.documentElement.scrollLeft}px, ${-sourceDocument.documentElement.scrollTop}px)`;
-            offset.style.transformOrigin = 'top left';
-            const content = cloneReaderSnapshot(sourceDocument.documentElement, families, documents);
-            content.style.overflow = 'visible';
-            content.querySelectorAll('head, script, style, link, meta').forEach(element => element.remove());
-            offset.append(content);
-            viewport.append(offset);
+            const column = cloneVisibleTextColumn(sourceDocument, families);
+            if (column) {
+                viewport.append(column);
+            } else {
+                // A cloned document cannot scroll, so move its columns inside the iframe-sized clip.
+                const offset = document.createElement('div');
+                offset.style.transform = `translate(${-sourceDocument.documentElement.scrollLeft}px, ${-sourceDocument.documentElement.scrollTop}px)`;
+                offset.style.transformOrigin = 'top left';
+                const content = cloneReaderSnapshot(sourceDocument.documentElement, families, documents);
+                content.style.overflow = 'visible';
+                content.querySelectorAll('head, script, style, link, meta').forEach(element => element.remove());
+                offset.append(content);
+                viewport.append(offset);
+            }
             copy.replaceWith(viewport);
         }
     });
@@ -257,7 +326,8 @@ async function snapshotReaderPage(node, width, height, pixelRatio) {
     return (await snapshotReaderPages([{ node, width, height, pixelRatio }]))[0];
 }
 
-export async function snapshotPageCurlLeaves(requests) {
+export async function snapshotPageCurlLeaves(requests, { epubSessionId, nativeCapture = createEpubCurlCapture(epubSessionId) } = {}) {
+    const nativePages = await nativeCapture?.read(requests);
     const results = new Array(requests.length);
     const groups = new Map();
     const pending = [];
@@ -268,6 +338,10 @@ export async function snapshotPageCurlLeaves(requests) {
         ));
     };
     requests.forEach((request, index) => {
+        if (nativePages?.[index]) {
+            results[index] = { status: 'fulfilled', value: nativePages[index] };
+            return;
+        }
         const { node, width, height, pixelRatio = 1 } = request;
         const reader = node?.querySelector('.viewer-text-page');
         const bounds = node?.getBoundingClientRect();

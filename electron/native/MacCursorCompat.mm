@@ -9,13 +9,13 @@
 @interface BMCursorOverlay : NSView
 @property(nonatomic, weak) BMCursorState *cursorState;
 @property(nonatomic, strong) NSTrackingArea *cursorTrackingArea;
+@property(nonatomic, strong) NSImageView *cursorView;
 @end
 
 @interface BMCursorState : NSObject
 @property(nonatomic, weak) NSWindow *targetWindow;
 @property(nonatomic, weak) NSView *contentView;
 @property(nonatomic, strong) BMCursorOverlay *overlay;
-@property(nonatomic, strong) NSImage *cursorImage;
 @property(nonatomic, copy) NSString *cursorType;
 @property(nonatomic) NSPoint hotspot;
 @property(nonatomic) NSPoint point;
@@ -64,29 +64,20 @@ static NSUInteger menuDepth = 0;
     if (!self.window) [self.cursorState restore];
 }
 
-- (void)drawRect:(NSRect)dirtyRect {
-    [NSColor.clearColor setFill];
-    NSRectFillUsingOperation(dirtyRect, NSCompositingOperationCopy);
-    BMCursorState *state = self.cursorState;
-    if (!state.ownsHide || !state.cursorImage) return;
-    [state.cursorImage drawInRect:state.imageRect fromRect:NSZeroRect
-        operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
-}
 @end
 
 @implementation BMCursorState
 - (NSRect)imageRect {
-    NSSize size = self.cursorImage.size;
+    NSSize size = self.overlay.cursorView.image.size;
     return NSMakeRect(self.point.x - self.hotspot.x, self.point.y - self.hotspot.y, size.width, size.height);
 }
 
 - (void)restore {
     if (!self.ownsHide) return;
-    NSRect oldRect = self.imageRect;
+    self.overlay.cursorView.hidden = YES;
     self.ownsHide = NO;
     [NSCursor unhide];
     self.unhideCount += 1;
-    [self.overlay setNeedsDisplayInRect:NSInsetRect(oldRect, -2, -2)];
     if (activeState == self) activeState = nil;
 }
 
@@ -112,7 +103,6 @@ static NSUInteger menuDepth = 0;
     if (content.subviews.lastObject != self.overlay) {
         [content addSubview:self.overlay positioned:NSWindowAbove relativeTo:nil];
     }
-    NSRect oldRect = self.ownsHide ? self.imageRect : NSZeroRect;
     self.point = point;
     if (activeState && activeState != self) [activeState restore];
     if (!self.ownsHide) {
@@ -121,8 +111,10 @@ static NSUInteger menuDepth = 0;
         self.hideCount += 1;
     }
     activeState = self;
-    NSRect dirtyRect = NSUnionRect(oldRect, self.imageRect);
-    [self.overlay setNeedsDisplayInRect:NSInsetRect(dirtyRect, -2, -2)];
+    NSRect frame = self.imageRect;
+    NSImageView *cursorView = self.overlay.cursorView;
+    if (!NSEqualRects(cursorView.frame, frame)) cursorView.frame = frame;
+    cursorView.hidden = cursorView.image == nil;
 }
 
 - (void)detach {
@@ -248,7 +240,8 @@ static void uninstallObservers(void) {
 }
 
 static NSCursor *nativeCursor(NSString *type) {
-    if ([@[@"pointer", @"default", @"null"] containsObject:type]) return NSCursor.arrowCursor;
+    // The system already draws the ordinary arrow, including after window activation.
+    if ([@[@"pointer", @"default", @"null"] containsObject:type]) return nil;
     if ([type isEqualToString:@"hand"]) return NSCursor.pointingHandCursor;
     if ([type isEqualToString:@"text"]) return NSCursor.IBeamCursor;
     if ([type isEqualToString:@"vertical-text"]) return NSCursor.IBeamCursorForVerticalLayout;
@@ -318,7 +311,7 @@ static napi_value inspectState(napi_env env, BMCursorState *state) {
     boolProperty(env, result, "attached", state.attached);
     boolProperty(env, result, "active", state.ownsHide);
     boolProperty(env, result, "ownsHide", state.ownsHide);
-    boolProperty(env, result, "overlayVisible", state.ownsHide && state.cursorImage != nil);
+    boolProperty(env, result, "overlayVisible", state.ownsHide && !state.overlay.cursorView.hidden);
     boolProperty(env, result, "suspended", state.suspended);
     boolProperty(env, result, "sheetSuspended", state.sheetSuspended);
     boolProperty(env, result, "dragSuspended", state.dragSuspended);
@@ -340,8 +333,8 @@ static napi_value inspectState(napi_env env, BMCursorState *state) {
     napi_set_named_property(env, result, "hotspot", hotspot);
     napi_value size;
     napi_create_object(env, &size);
-    numberProperty(env, size, "width", state.cursorImage.size.width);
-    numberProperty(env, size, "height", state.cursorImage.size.height);
+    numberProperty(env, size, "width", state.overlay.cursorView.image.size.width);
+    numberProperty(env, size, "height", state.overlay.cursorView.image.size.height);
     napi_set_named_property(env, result, "imageSize", size);
     return result;
 }
@@ -395,15 +388,17 @@ static napi_value attach(napi_env env, napi_callback_info info) {
         state.contentView = content;
         state.targetWindow = content.window;
         state.attached = YES;
-        state.supported = YES;
         state.cursorType = @"pointer";
-        state.cursorImage = NSCursor.arrowCursor.image;
-        state.hotspot = NSCursor.arrowCursor.hotSpot;
         state.overlay = [[BMCursorOverlay alloc] initWithFrame:content.bounds];
         state.overlay.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         state.overlay.wantsLayer = YES;
         state.overlay.layer.backgroundColor = NSColor.clearColor.CGColor;
         state.overlay.cursorState = state;
+        NSImageView *cursorView = [[NSImageView alloc] initWithFrame:NSZeroRect];
+        cursorView.wantsLayer = YES;
+        cursorView.hidden = YES;
+        state.overlay.cursorView = cursorView;
+        [state.overlay addSubview:cursorView];
         [content addSubview:state.overlay positioned:NSWindowAbove relativeTo:nil];
         states[identifier] = state;
         installObservers();
@@ -456,12 +451,10 @@ static napi_value setCursor(napi_env env, napi_callback_info info) {
                 }
             }
         }
-        NSRect oldRect = state.imageRect;
         state.cursorType = type;
-        state.cursorImage = image;
+        state.overlay.cursorView.image = image;
         state.hotspot = hotspot;
         state.supported = supported;
-        [state.overlay setNeedsDisplayInRect:NSInsetRect(oldRect, -2, -2)];
         [state refresh];
         return inspectState(env, state);
     }

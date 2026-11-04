@@ -288,7 +288,7 @@ function SharingTab({ config, saveConfig, t, showToast, attentionRequest = null,
     return (
         <div className="sharing-tab">
             <div className="sharing-left-panel">
-                <ReadiveConnectionPanel t={t} showToast={showToast} variant="sharing" attentionRequest={attentionRequest} isActive={isActive} />
+                <ReadiveConnectionPanel t={t} config={config} saveConfig={saveConfig} variant="sharing" attentionRequest={attentionRequest} isActive={isActive} />
                 <div className="sharing-groupbox">
                     <div className="sharing-groupbox-title">{t('tab_sharing_security_title')}</div>
                     <div className="sharing-groupbox-content">

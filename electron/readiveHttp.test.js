@@ -18,6 +18,41 @@ async function freePort(address) {
     return port;
 }
 
+function pinnedAgent(pin) {
+    const agent = new https.Agent();
+    agent.createConnection = (options, callback) => {
+        // Only the independently paired leaf pin can authorize this test connection.
+        const socket = tls.connect({ ...options, rejectUnauthorized: false });
+        socket.once('secureConnect', () => {
+            const actual = crypto.createHash('sha256').update(socket.getPeerCertificate().raw).digest('hex');
+            if (actual !== pin) {
+                socket.destroy();
+                callback(new Error('certificate_pin_mismatch'));
+            } else callback(null, socket);
+        });
+        socket.once('error', callback);
+    };
+    return agent;
+}
+
+test('Readive binds HTTPS to an installed Tailscale IPv4 address', async t => {
+    const local = listReadiveInterfaces().find(item => item.kind === 'tailscale');
+    if (!local) return t.skip('A Tailscale IPv4 interface is required.');
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'readive-tailnet-'));
+    const service = new ReadiveService({ directory: root });
+    t.after(async () => { await service.stop(); await fs.rm(root, { recursive: true, force: true }); });
+    const port = await freePort(local.address);
+    const status = await service.start({ address: local.address, port });
+    assert.equal(service.server.address().address, local.address);
+    const ticket = JSON.parse(status.pairing.ticket);
+    assert.deepEqual([ticket.host, ticket.port], [local.address, port]);
+    const response = await new Promise((resolve, reject) => {
+        https.get(`${status.url}/readive/v1/jobs`, { agent: pinnedAgent(ticket.certificateSha256), localAddress: local.address }, resolve).on('error', reject);
+    });
+    response.resume();
+    assert.equal(response.statusCode, 401);
+});
+
 test('Readive HTTPS verifies pinned identity, emits bounded responses, resumes ranges, and denies stale/cancelled assets', async t => {
     const local = listReadiveInterfaces()[0];
     if (!local) { t.skip('A private IPv4 LAN interface is required.'); return; }
@@ -43,21 +78,8 @@ test('Readive HTTPS verifies pinned identity, emits bounded responses, resumes r
     const ca = await fs.readFile(path.join(root, 'state', 'certificate.pem'));
     const request = (route, { method = 'GET', body, token, headers = {}, pin = ticket.certificateSha256 } = {}) => new Promise((resolve, reject) => {
         const bytes = body === undefined ? null : Buffer.from(JSON.stringify(body));
-        const agent = new https.Agent();
-        agent.createConnection = (options, callback) => {
-            // Only the independently paired leaf pin can authorize this test connection.
-            const socket = tls.connect({ ...options, rejectUnauthorized: false });
-            socket.once('secureConnect', () => {
-                const actual = crypto.createHash('sha256').update(socket.getPeerCertificate().raw).digest('hex');
-                if (actual !== pin) {
-                    socket.destroy();
-                    callback(new Error('certificate_pin_mismatch'));
-                } else callback(null, socket);
-            });
-            socket.once('error', callback);
-        };
         const req = https.request({
-            hostname: local.address, port: service.port, path: `/readive/v1${route}`, method, ca, agent,
+            hostname: local.address, port: service.port, path: `/readive/v1${route}`, method, ca, agent: pinnedAgent(pin),
             headers: { ...headers, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(bytes ? { 'Content-Type': 'application/json', 'Content-Length': bytes.length } : {}) },
         }, response => {
             const chunks = [];

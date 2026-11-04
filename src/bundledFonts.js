@@ -13,6 +13,10 @@ const BUNDLED_FONT_URLS = {
     'NotoSansKR-VariableFont_wght.ttf': new URL('./fonts/NotoSansKR-VariableFont_wght.ttf', import.meta.url).href,
 };
 
+export function bundledFontFilenameForUrl(url) {
+    return Object.keys(BUNDLED_FONT_URLS).find(filename => BUNDLED_FONT_URLS[filename] === url);
+}
+
 function uniqueByValue(options = []) {
     const seen = new Set();
     const result = [];
