@@ -659,6 +659,8 @@ function App() {
     ? statusStates[effectiveWorkingTab] || activeStatus
     : activeStatus;
   const lockStatusMessage = translateKnownText(lockStatus.message, language);
+  const standbyLabel = t('status_wait');
+  const statusIconLabel = isAppLocked ? t('msg_processing_overlay') : standbyLabel;
   const lockMessage = lockStatusMessage || t('msg_processing_overlay') || t('status_wait');
   const lockCurrentItem = lockStatus.currentItem || '';
   const lockCurrentItemName = lockStatus.currentItemName || lockCurrentItem;
@@ -882,11 +884,26 @@ function App() {
       <div className="app-bottom-bar">
         <div className="app-status-area">
           {runningServers.length > 0 && (
-            <span className="app-server-status" title={serverTooltip}>
-              <FaIcon name="towerBroadcast" size={14} />
-            </span>
+            <>
+                <span className="app-server-status" title={serverTooltip}>
+                    <FaIcon name="towerBroadcast" size={14} />
+                </span>
+                <span aria-hidden="true">·</span>
+            </>
           )}
-          <span className="app-status-message">{lockStatusMessage || t('status_wait')}</span>
+          <span className="app-status-message" role="img" aria-label={statusIconLabel} title={statusIconLabel}>
+            {isAppLocked ? (
+                <FaIcon name="spinner" className="app-status-spinner" />
+            ) : (
+                <svg className="app-standby-icon" viewBox="0 0 40 40" aria-hidden="true" focusable="false">
+                    <circle cx="20" cy="20" r="18" fill="none" stroke="currentColor" strokeWidth="4" />
+                    <circle cx="20" cy="20" r="6" fill="currentColor" />
+                </svg>
+            )}
+          </span>
+          {lockStatusMessage && lockStatusMessage !== standbyLabel && (
+            <span className="app-status-message">{lockStatusMessage}</span>
+          )}
           {showProgress && (
             <div className="app-progress">
               <div className="app-progress-fill" style={{ width: `${lockStatus.progress}%` }} />

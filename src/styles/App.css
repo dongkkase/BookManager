@@ -851,6 +851,17 @@ body.is-resizing-panel * {
   white-space: nowrap;
 }
 
+.app-standby-icon {
+    display: block;
+    width: calc(14px * var(--font-scale, 1));
+    height: auto;
+}
+
+.app-status-spinner {
+    display: block;
+    animation: fa-spin 1s linear infinite;
+}
+
 .app-progress {
   position: relative;
   width: 150px;

@@ -18,6 +18,7 @@ test('모션 설정은 OS 설정과 독립적으로 CSS 효과를 제어하고 �
     try {
         const renderer = `
 import { applyMotionPreference, initializeMotionPreference } from './src/motionPolicy.js';
+import '@fortawesome/fontawesome-svg-core/styles.css';
 import './src/styles/global.css';
 import './src/styles/App.css';
 import './src/styles/FolderTab.css';
@@ -53,6 +54,7 @@ document.body.innerHTML = \`
     <div class="search-placeholder-viewport is-overflowing"><span class="search-placeholder-text">Search</span></div>
     <div class="readive-dialog"><span class="readive-spinner"></span></div>
     <div class="content-index-spinner"></div>
+    <svg id="statusSpinner" class="fa-icon app-status-spinner"></svg>
     <div class="ee-busy-spinner"></div>
     <div class="viewer-epub-audio-controls is-playing"><i class="viewer-epub-audio-note"></i><div class="viewer-epub-audio-levels"><i></i></div></div>
     <div id="attention" class="readive-sharing-panel is-connection-attention"></div>
@@ -73,6 +75,7 @@ window.verifyMotion = async (preference, systemReduced) => {
     check((style('sectionContent').transitionDuration === '0s') === reduced, label + ': sidebar transition');
     check((style('supportLayer').transitionDuration === '0s') === reduced, label + ': GitHub dialog transition');
     check((style('loading').animationName === 'none') === reduced, label + ': spinner animation');
+    check(document.getElementById('statusSpinner').getAnimations().length === (reduced ? 0 : 1), label + ': status bar spinner rotation');
     check((style('rating').transform === 'none') === reduced, label + ': decorative rating transform');
     if (reduced) {
         for (const element of document.querySelectorAll('*')) {
