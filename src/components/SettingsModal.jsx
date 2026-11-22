@@ -30,6 +30,7 @@ import { SettingsLibraryPreview } from './SettingsLibraryPreview';
 import { SettingsLibraryList } from './SettingsLibraryList';
 import { SettingsDataFolder } from './SettingsDataFolder';
 import { METADATA_PROVIDER_GUIDES } from '../metadataProviderGuides.js';
+import { MetadataSearchSettingsFields } from './metadata/MetadataSearchSettingsFields';
 
 const LANGUAGE_OPTIONS = [
   { value: 'ko', label: '한국어' },
@@ -53,6 +54,7 @@ const API_SETTINGS_SECTIONS = [
     { id: 'providers', labelKey: 'settings.api.search_settings' },
     { id: 'ai', labelKey: 'ai_cover_search_group' },
     { id: 'tags', labelKey: 'tag_rules_group' },
+    { id: 'filters', labelKey: 'metadata_search_settings.menu' },
     { id: 'cache', labelKey: 'settings.api.search_cache' },
 ];
 
@@ -1855,6 +1857,14 @@ function SettingsModal({ isOpen = true, onClose, config, onSave, onPersistViewer
               />
               </fieldset>
               )}
+                {activeApiSection === 'filters' && (
+                    <fieldset className="settings-fieldset" disabled={isApplying}>
+                        <legend>{t('metadata_search_settings.menu')}</legend>
+                        <p className="settings-help">{t('metadata_search_settings.settings_hint')}</p>
+                        <MetadataSearchSettingsFields settings={localConfig.metadata_search_settings} disabled={isApplying} settingsPage t={t}
+                            onChange={value => handleChange('metadata_search_settings', value)} />
+                    </fieldset>
+                )}
               {activeApiSection === 'cache' && (
               <fieldset className="settings-fieldset">
               <legend>{t('settings.sections.search_cache')}</legend>

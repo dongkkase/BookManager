@@ -31,6 +31,7 @@ const sources = {
         './metadata/bookMetadataFields.js',
         './metadata/audiobookMetadataFields.js',
         './components/metadata/ComicMetadataEditor.jsx',
+        './components/metadata/MetadataTagInput.jsx',
         './components/metadata/BookMetadataEditor.jsx',
         './components/metadata/AudiobookMetadataEditor.jsx',
     ].map(file => fs.readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n'),

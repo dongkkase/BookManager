@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { transformSync } from 'esbuild';
 
-const source = fs.readFileSync(new URL('./tabs/MetadataTab.jsx', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('./components/metadata/MetadataTagInput.jsx', import.meta.url), 'utf8');
 
 function fragment(startMarker, endMarker) {
     const start = source.indexOf(startMarker);
@@ -13,8 +13,7 @@ function fragment(startMarker, endMarker) {
 }
 
 const compiled = transformSync([
-    fragment('function splitTagValues(', 'function pickMetadataFields('),
-    fragment('function TagInput(', 'function MetadataSearchDialog('),
+    fragment('function splitTagValues(', 'export {'),
     'module.exports = TagInput;',
 ].join('\n'), { loader: 'jsx', format: 'cjs', target: 'es2022' }).code;
 const nodes = node => node && typeof node === 'object'

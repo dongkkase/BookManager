@@ -4,6 +4,7 @@ import test from 'node:test';
 import { transformSync } from 'esbuild';
 import * as appShell from './appShell.js';
 import * as coverEditorBatch from './coverEditorBatch.js';
+import * as coverEditorGroups from './coverEditorGroups.js';
 import * as metadataTypes from './metadata/metadataTypes.js';
 import * as coverReadingState from '../electron/coverReadingState.js';
 import * as toolbarState from './toolbarState.js';
@@ -106,6 +107,7 @@ function fixture(t, initialProps = {}) {
         if (name === '../../../components/folder/CoverEditorDialog') return { CoverEditorDialog: 'CoverEditorDialog' };
         if (name === '../../../appShell') return appShell;
         if (name === '../../../coverEditorBatch') return coverEditorBatch;
+        if (name === '../../../coverEditorGroups') return coverEditorGroups;
         if (name === '../../../metadata/metadataTypes') return metadataTypes;
         if (name === '../../../../electron/coverReadingState') return coverReadingState;
         if (name === '../../../toolbarState') return toolbarState;
@@ -264,6 +266,27 @@ test('행 삭제는 지정한 파일만 목록에서 제거하고 나머지 파�
     assert.deepEqual(app.calls.applies, []);
 });
 
+test('그룹 제거는 체크 여부와 관계없이 해당 폴더만 목록에서 빼고 하위 폴더와 다른 그룹을 유지한다', t => {
+    const app = fixture(t, { openRequest: { paths: ['/books/A/one.cbz', '/books/A/two.epub', '/books/A/nested/three.cbz', '/books/B/four.pdf'] } });
+    app.dialog().onToggleFile('/books/A/two.epub');
+    app.dialog().onToggleFile('/books/B/four.pdf');
+    app.render();
+    const remaining = app.dialog().files.slice(2);
+    app.dialog().onRemoveGroup('/books/A');
+    app.render();
+    assert.deepEqual(app.paths(), ['/books/A/nested/three.cbz', '/books/B/four.pdf']);
+    assert.deepEqual(app.checkedPaths(), ['/books/A/nested/three.cbz']);
+    assert.equal(app.dialog().files[0], remaining[0]);
+    assert.equal(app.dialog().files[1], remaining[1]);
+    assert.equal(app.toolbar().totalCount, 2);
+    app.dialog().onRemoveGroup('/books/A/nested');
+    app.dialog().onRemoveGroup('/books/B');
+    app.render();
+    assert.deepEqual(app.paths(), []);
+    assert.equal(app.toolbar().hasItems, false);
+    assert.deepEqual(app.calls.applies, []);
+});
+
 test('다른 탭의 공통 파일 동작과 표지 검사 중 파일 변경을 무시한다', async t => {
     const app = fixture(t, { openRequest: { paths: ['/books/a.cbz'] } });
     for (const action of ['add-file', 'add-folder', 'toggle-all', 'remove-selected', 'clear-all']) app.action(action, 'renamer');
@@ -279,6 +302,7 @@ test('다른 탭의 공통 파일 동작과 표지 검사 중 파일 변경을 �
     app.dialog().onToggleFile('/books/a.cbz');
     app.dialog().onToggleAll();
     app.dialog().onRemoveFile('/books/a.cbz');
+    app.dialog().onRemoveGroup('/books');
     await app.flush();
     assert.deepEqual(app.paths(), ['/books/a.cbz']);
     assert.deepEqual(app.checkedPaths(), ['/books/a.cbz']);
@@ -915,16 +939,106 @@ test('작업 중 전달 요청을 순서대로 보관하고 작업 종료 후 �
     assert.deepEqual(app.paths(), []);
 });
 
-test('폴더에서 빈 목록으로 전달하거나 지원 파일이 없으면 추가 방식을 묻지 않는다', t => {
+test('폴더에서 빈 목록으로 전달하거나 지원 파일이 없으면 추가 방식을 묻지 않는다', async t => {
     const app = fixture(t, { openRequest: { paths: ['/books/initial.cbz'], source: 'folder' } });
+    await app.flush();
     assert.deepEqual(app.paths(), ['/books/initial.cbz']);
     app.update({ openRequest: { paths: ['/books/unsupported.png'], source: 'folder' } });
+    await app.flush();
     assert.deepEqual(app.paths(), ['/books/initial.cbz']);
     assert.deepEqual(app.calls.toasts, [{ key: 'cover_editor_tool_unsupported', values: [1] }]);
     app.update({ openRequest: { paths: ['/books/navigation.epub'], source: 'navigation' } });
     app.update({ openRequest: { paths: ['/books/drop.pdf'], source: 'drop' } });
     assert.deepEqual(app.paths(), ['/books/initial.cbz', '/books/navigation.epub', '/books/drop.pdf']);
     assert.deepEqual(app.calls.messages, []);
+});
+
+test('폴더 목록에서 전달한 폴더와 파일은 하위 지원 파일을 중복 없이 수집한다', async t => {
+    const app = fixture(t);
+    const folders = {
+        '/books/series.cbz': [
+            { name: 'book.epub', isFile: true }, { name: 'nested', isDirectory: true },
+            { name: 'bak', isDirectory: true }, { name: '.hidden', isDirectory: true },
+            { name: 'linked', isFile: false, isDirectory: false }, { name: 'cover.jpg', isFile: true },
+        ],
+        '/books/series.cbz/nested': [{ name: 'chapter.cbz', isFile: true }],
+        '/books/other': [{ name: 'audio.mp3', isFile: true }],
+    };
+    app.api.stat = async path => ({ isDirectory: Boolean(folders[path]), isFile: !folders[path] });
+    app.api.readDir = async path => { app.calls.reads.push(path); return folders[path]; };
+    app.update({ openRequest: { paths: ['/books/series.cbz', '/books/series.cbz/book.epub', '/books/other', '/books/notes.txt'], source: 'folder' } });
+    assert.equal(app.dialog().externalBusy, true);
+    app.action('clear-all');
+    await app.flush();
+    assert.deepEqual(app.paths(), ['/books/series.cbz/book.epub', '/books/series.cbz/nested/chapter.cbz', '/books/other/audio.mp3', '/books/notes.txt']);
+    assert.deepEqual(app.checkedPaths(), app.paths());
+    assert.deepEqual(app.calls.reads, ['/books/series.cbz', '/books/series.cbz/nested', '/books/other']);
+    assert.deepEqual(app.calls.folderPicks, []);
+    assert.deepEqual(app.calls.messages, []);
+    assert.deepEqual(app.calls.toasts, []);
+    assert.equal(app.toolbar().fileActionsBusy, false);
+});
+
+test('전달한 폴더 수집 후 추가·교체·취소를 적용하고 빈 폴더는 기존 목록을 유지한다', async t => {
+    for (const choice of ['append', 'replace', 'cancel']) {
+        await t.test(choice, async t => {
+            const app = fixture(t, { openRequest: { paths: ['/books/initial.cbz'] } });
+            app.api.stat = async () => ({ isDirectory: true });
+            app.api.readDir = async path => path === '/books/incoming' ? [{ name: 'new.epub', isFile: true }] : [];
+            app.api.showMessage = async options => { app.calls.messages.push(options); return choice; };
+            app.update({ openRequest: { paths: ['/books/incoming'], source: 'folder' } });
+            await app.flush();
+            const expected = choice === 'append' ? ['/books/initial.cbz', '/books/incoming/new.epub']
+                : choice === 'replace' ? ['/books/incoming/new.epub'] : ['/books/initial.cbz'];
+            assert.deepEqual(app.paths(), expected);
+            assert.equal(app.calls.messages.length, 1);
+            app.update({ openRequest: { paths: ['/books/empty'], source: 'folder', mode: 'replace' } });
+            await app.flush();
+            assert.deepEqual(app.paths(), expected);
+            assert.equal(app.calls.messages.length, 1);
+        });
+    }
+});
+
+test('전달한 폴더를 수집하는 동안 들어온 요청은 순서대로 처리하고 수집 실패 시 기존 목록을 보존한다', async t => {
+    const app = fixture(t, { openRequest: { paths: ['/books/initial.cbz'] } });
+    const read = deferred();
+    app.api.stat = async path => ({ isDirectory: path === '/books/incoming', isFile: path !== '/books/incoming' });
+    app.api.readDir = () => read.promise;
+    app.api.showMessage = async options => { app.calls.messages.push(options); return 'append'; };
+    app.update({ openRequest: { paths: ['/books/incoming'], source: 'folder' } });
+    await app.flush();
+    app.update({ openRequest: { paths: ['/books/next.epub'], source: 'folder' } });
+    assert.deepEqual(app.calls.messages, []);
+    assert.equal(app.toolbar().fileActionsBusy, true);
+    read.reject(new Error('Cannot read directory'));
+    await app.flush();
+    assert.deepEqual(app.paths(), ['/books/initial.cbz', '/books/next.epub']);
+    assert.deepEqual(app.calls.toasts, [{ key: 'cover_editor_tool_add_failed', values: ['Cannot read directory'] }]);
+    assert.equal(app.calls.messages.length, 1);
+    assert.equal(app.toolbar().fileActionsBusy, false);
+});
+
+test('전달한 폴더 수집 중 이탈하거나 unmount하면 늦은 결과와 오류를 반영하지 않는다', async t => {
+    for (const outcome of ['back', 'unmount', 'failure']) {
+        await t.test(outcome, async t => {
+            const app = fixture(t, { openRequest: { paths: ['/books/initial.cbz'] } });
+            const read = deferred();
+            app.api.stat = async () => ({ isDirectory: true });
+            app.api.readDir = () => read.promise;
+            app.update({ openRequest: { paths: ['/books/incoming'], source: 'folder' } });
+            await app.flush();
+            if (outcome === 'back') app.dialog().onClose();
+            else app.unmount();
+            if (outcome === 'failure') read.reject(new Error('Window closed'));
+            else read.resolve([{ name: 'late.epub', isFile: true }]);
+            await app.flush();
+            assert.deepEqual(app.paths(), ['/books/initial.cbz']);
+            assert.deepEqual(app.calls.messages, []);
+            assert.deepEqual(app.calls.toasts, []);
+            assert.equal(app.calls.updatesAfterUnmount, 0);
+        });
+    }
 });
 
 test('폴더 전달의 추가·교체·취소 선택을 적용하고 기존 선택과 편집 설정을 유지한다', async t => {
@@ -973,6 +1087,7 @@ test('검사 중 도착한 폴더 요청은 완료 후 하나씩 묻고 선택�
     assert.deepEqual(app.paths(), ['/books/initial.cbz']);
     app.dialog().onBusyChange(false);
     app.render();
+    await app.flush();
     assert.equal(app.calls.messages.length, 1);
     app.update({ openRequest: { paths: ['/books/second.pdf'], source: 'folder' } });
     assert.equal(app.calls.messages.length, 1);
@@ -991,6 +1106,7 @@ test('선택 대기 중 검사가 시작되면 응답을 보관하고 검사 종
     const choice = deferred();
     app.api.showMessage = options => { app.calls.messages.push(options); return choice.promise; };
     app.update({ openRequest: { paths: ['/books/replacement.epub'], source: 'folder' } });
+    await app.flush();
     app.dialog().onBusyChange(true);
     app.render();
     choice.resolve('replace');
@@ -1030,6 +1146,7 @@ test('추가 방식 선택 중 목록 조작·저장·이탈을 막고 늦은 �
     app.action('add-file');
     app.api.showMessage = options => { app.calls.messages.push(options); return choice.promise; };
     app.update({ openRequest: { paths: ['/books/new.epub'], source: 'folder' } });
+    await app.flush();
     assert.equal(app.toolbar().fileActionsBusy, true);
     assert.equal(app.beforeLeave(), false);
     const session = app.dialog().key;
@@ -1077,6 +1194,7 @@ test('unmount 이후 추가 방식 응답이나 실패로 상태와 알림을 �
             const choice = deferred();
             app.api.showMessage = () => choice.promise;
             app.update({ openRequest: { paths: ['/books/new.epub'], source: 'folder' } });
+            await app.flush();
             app.unmount();
             if (reject) choice.reject(new Error('window closed'));
             else choice.resolve('replace');

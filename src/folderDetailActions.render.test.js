@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { createServer } from 'vite';
 
-test('상세 더보기 메뉴는 현재 책에만 작업하며 두 패널 배치에서 접근할 수 있다', async t => {
+test('상세 더보기와 리스트·탐색기 폴더 메뉴는 각 대상만 표지 도구로 전달한다', async t => {
     if (process.env.BOOKMANAGER_RENDERER_TESTS !== '1' || (process.platform === 'linux' && !process.env.DISPLAY)) {
         t.skip('Set BOOKMANAGER_RENDERER_TESTS=1 with a display to run the isolated Electron renderer.');
         return;
@@ -43,7 +43,8 @@ const makeBook = (name, title, ext = '.epub') => ({
 const first = makeBook('first', '첫 번째 책');
 const current = makeBook('current', '상세 작업 대상');
 const unsupported = makeBook('unsupported', '지원하지 않는 형식', '.mobi');
-const files = [first, current, unsupported];
+const folders = ['Series 1', 'Series 2'].map(name => ({ ...makeBook(name, name, ''), isDirectory: true }));
+const files = [first, current, unsupported, ...folders];
 const memberships = new Map([['want-to-read', new Set()], ['collection-1', new Set()]]);
 const listRequests = [];
 const progressRequests = [];
@@ -52,10 +53,10 @@ const navigations = [];
 const viewerPaths = [];
 window.addEventListener('bookmanager:navigate', event => navigations.push(event.detail));
 window.electronAPI = {
-    getRoots: async () => [], getSpecialPaths: async () => ({}), getLibraryScanStates: async () => ({}),
+    getRoots: async () => ['/fixture'], getSpecialPaths: async () => ({}), getLibraryScanStates: async () => ({}),
     getReadingStates: async () => [], listRecentReading: async () => [],
-    stat: async filePath => ({ isDirectory: filePath === '/fixture', isFile: files.some(file => file.path === filePath) }),
-    readDir: async () => files.map(file => ({ ...file, isFile: true })), scanFolder: async () => files,
+    stat: async filePath => ({ isDirectory: filePath === '/fixture' || folders.some(file => file.path === filePath), isFile: files.some(file => file.path === filePath && !file.isDirectory) }),
+    readDir: async () => files.map(file => ({ ...file, isFile: !file.isDirectory })), scanFolder: async () => files,
     getFilePreview: async () => ({ success: false }),
     openInternalViewer: async filePath => { viewerPaths.push(filePath); return { success: true }; },
     readingLists: async request => {
@@ -198,8 +199,41 @@ window.runFolderDetailActionTests = async () => {
     await openMenu();
     check(menuButton('rating_editor_title')?.disabled, 'Unsupported file rating must be disabled');
     check(menuButton('folder.detail.edit_cover')?.disabled, 'Unsupported file cover editing must be disabled');
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+    await until(() => !isMenuOpen(), 'Unsupported detail menu did not close');
+    row(folders[0]).click();
+    await until(() => selectedPaths().includes(folders[0].path), 'First folder was not selected');
+    const modifier = /Mac|iPhone|iPad|iPod/i.test(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
+    row(folders[1]).dispatchEvent(new MouseEvent('click', { bubbles: true, ...modifier }));
+    await until(() => selectedPaths().length === 2, 'Both folders must be selected');
+    row(folders[0]).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 250, clientY: 200 }));
+    const toolsMenu = () => [...document.querySelectorAll('.folder-context-submenu-trigger')]
+        .find(button => button.textContent.trim() === t('tools.context_menu') && !button.closest('[inert]'));
+    await until(toolsMenu, 'Folder context menu must include File Tools');
+    toolsMenu().click();
+    const coverAction = () => [...document.querySelectorAll('.folder-context-submenu-flyout button')]
+        .find(button => button.textContent.trim() === t('cover_editor_open_tool') && !button.closest('[inert]'));
+    await until(() => toolsMenu()?.getAttribute('aria-expanded') === 'true' && coverAction(), 'Folder cover action did not open');
+    await frame();
+    clickVisible(coverAction());
+    await until(() => navigations.at(-1)?.paths?.includes(folders[0].path), 'Folder cover navigation did not run');
+    check(navigations.at(-1).toolId === 'cover-editor' && navigations.at(-1).source === 'folder' && navigations.at(-1).mode === 'append', 'Folder cover request lost its tool or add mode');
+    check(JSON.stringify([...navigations.at(-1).paths].sort()) === JSON.stringify(folders.map(file => file.path).sort()), 'Folder cover request must include exactly the selected folders');
+    const treeFolder = () => document.querySelector('[data-folder-sidebar-path="' + folders[1].path + '"]');
+    if (!treeFolder()) document.querySelector('[data-folder-sidebar-path="/fixture"] .folder-tree-expander').click();
+    await until(treeFolder, 'Explorer folder did not appear');
+    const navigationCount = navigations.length;
+    treeFolder().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 150, clientY: 200 }));
+    await until(toolsMenu, 'Explorer folder context menu must include File Tools');
+    toolsMenu().click();
+    await until(() => toolsMenu()?.getAttribute('aria-expanded') === 'true' && coverAction(), 'Explorer cover action did not open');
+    await frame();
+    clickVisible(coverAction());
+    await until(() => navigations.length === navigationCount + 1, 'Explorer cover navigation did not run');
+    check(navigations.at(-1).toolId === 'cover-editor' && navigations.at(-1).source === 'folder' && navigations.at(-1).mode === 'append', 'Explorer cover request lost its tool or add mode');
+    check(JSON.stringify(navigations.at(-1).paths) === JSON.stringify([folders[1].path]), 'Explorer action must target only the right-clicked folder despite the list selection');
     root.unmount();
-    return { layouts: ['bottom', 'right'], actions: 8, progressChanges: progressRequests.length, ratingSaves: ratingRequests.length };
+    return { layouts: ['bottom', 'right'], actions: 8, progressChanges: progressRequests.length, ratingSaves: ratingRequests.length, folderTargets: folders.length };
 };
 `);
         await fs.writeFile(path.join(directory, 'index.html'), '<!doctype html><html><head><meta charset="utf-8"><style>html,body,#root{margin:0;width:100%;height:100%;overflow:hidden}</style></head><body><div id="root"></div><script type="module" src="/fixture.jsx"></script></body></html>');
@@ -237,7 +271,7 @@ app.whenReady().then(async () => {
         assert.equal(output.code, 0, output.result);
         const payload = output.result.match(/FOLDER_DETAIL_ACTIONS_RESULT=(.+)/)?.[1];
         assert.ok(payload, output.result);
-        assert.deepEqual(JSON.parse(payload), { layouts: ['bottom', 'right'], actions: 8, progressChanges: 2, ratingSaves: 1 });
+        assert.deepEqual(JSON.parse(payload), { layouts: ['bottom', 'right'], actions: 8, progressChanges: 2, ratingSaves: 1, folderTargets: 2 });
     } finally {
         await server?.close();
         await fs.rm(directory, { recursive: true, force: true });

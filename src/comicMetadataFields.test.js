@@ -50,7 +50,7 @@ test('Webtoon format is searchable in Korean and English and saves its canonical
     assert.equal(FORMAT_OPTIONS.filter(option => option === 'Webtoon').length, 1);
     assert.ok(SEARCHABLE_SELECT_FIELDS.has('Format'));
     assert.equal(translate('meta_formats', 'ko').Webtoon, '웹툰 (Webtoon)');
-    const selectSource = fragment('function SearchableSelect(', 'function TagInput(').split('\n  return (')[0];
+    const selectSource = fragment('function SearchableSelect(', 'function MetadataSearchDialog(').split('\n  return (')[0];
     for (const query of ['웹툰', 'Webtoon', 'WEBTOON']) {
         let stateIndex = 0;
         let chosen;

@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { transformSync } from 'esbuild';
 import { ALL_METADATA_API_SOURCES, UNIFIED_METADATA_API_SOURCE } from './metadataApiPolicy.js';
 import { metadataSearchResultKey } from './metadataSearch.js';
+import { filterMetadataSearchResults, isMetadataSearchTagExcluded, metadataSearchResultTags } from './metadataSearchSettings.js';
 import { comicVineSearchThumbnail } from './comicVineSearchEnrichment.js';
 import { translate } from './utils/i18n.js';
 
@@ -166,6 +167,7 @@ test('selection and cover shortcuts wait for Comic Vine details', () => {
             dialogQueryInputRef: { current: null }, dialogRef: { current: null },
             selected: { id: 42 }, selectedCoverUrl: 'https://images.test/cover.jpg',
             state: { loading: false, results: [{ id: 42 }] },
+            visibleResults: [{ id: 42 }], settingsOpen: false, savingTag: false,
             useCallback: callback => callback,
             shortcutCode: event => event.code, isMetadataTextInput: () => false,
             onSearch: () => {}, moveSelectedResult: () => {},
@@ -213,6 +215,7 @@ function renderSearchDialog(results, { apiSource = 'Vine', language = 'en' } = {
     const context = vm.createContext({
         React,
         useState: React.useState,
+        useMemo: React.useMemo,
         useRef: React.useRef,
         useCallback: React.useCallback,
         useEffect() {},
@@ -222,6 +225,9 @@ function renderSearchDialog(results, { apiSource = 'Vine', language = 'en' } = {
         ALL_METADATA_API_SOURCES,
         UNIFIED_METADATA_API_SOURCE,
         metadataSearchResultKey,
+        filterMetadataSearchResults,
+        isMetadataSearchTagExcluded,
+        metadataSearchResultTags,
         comicVineSearchThumbnail,
         apiResultCoverUrl: result => result.coverUrl || '',
     });

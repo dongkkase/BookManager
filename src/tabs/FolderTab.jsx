@@ -3823,8 +3823,10 @@ function FolderTab({ config, saveConfig, t, showToast }) {
         await changeReadingProgress(menu, action);
     } else if (action === 'edit-rating' && supportsRatingEditor(menu.file)) {
         setRatingEditorTarget(menu.file);
-    } else if (action === 'edit-cover' && supportsCoverEditor(menu.file)) {
-        const paths = resolveCoverEditorTargets(menu.file, menu.source === 'detail' ? [menu.file] : selectedEntryObjects).map(file => file.full_path || file.path);
+    } else if (action === 'edit-cover' && (supportsCoverEditor(menu.file) || menu.type === 'folder')) {
+        const paths = menu.type === 'folder'
+            ? resolveReadingActionPaths(menu, selectedEntryObjects)
+            : resolveCoverEditorTargets(menu.file, menu.source === 'detail' ? [menu.file] : selectedEntryObjects).map(file => file.full_path || file.path);
         if (paths.length > 0) {
             window.dispatchEvent(new CustomEvent('bookmanager:navigate', {
                 detail: { tabId: 'tools', toolId: 'cover-editor', paths, source: 'folder', mode: 'append' },
@@ -4995,6 +4997,9 @@ function FolderTab({ config, saveConfig, t, showToast }) {
               <ContextMenuItem onClick={() => handleContextAction('send-organizer')} label={t('action_flatten_structure')} shortcut="F1" />
               <ContextMenuItem onClick={() => handleContextAction('send-renamer')} label={t('action_inner_ren')} shortcut="F2" />
               <ContextMenuItem onClick={() => handleContextAction('send-metadata')} label={t('action_meta_edit')} shortcut="F3" />
+                <ContextMenuSubmenu label={t('tools.context_menu')} icon="fileLines">
+                    <ContextMenuItem onClick={() => handleContextAction('edit-cover')} icon="image" label={t('cover_editor_open_tool')} />
+                </ContextMenuSubmenu>
               <div className="folder-context-menu-separator" />
               <ContextMenuItem onClick={() => handleContextAction('delete-folder')} danger={contextMenu.source === 'list'} label={t(contextMenu.source === 'list' && selectedEntryObjects.length > 1 ? 'action_del_entries' : isFavoritesView && contextMenu.source === 'list' ? 'dlg_del_folder_title' : 'action_del_folder')} shortcut={isFavoritesView && contextMenu.source === 'list' ? '' : 'Del'} />
                 <div className="folder-context-menu-separator" role="separator" />

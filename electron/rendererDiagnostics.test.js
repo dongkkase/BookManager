@@ -151,7 +151,7 @@ test('plain unhandled rejections and uncaught errors receive distinct safe group
     }
 });
 
-test('stackless viewer browser notifications get distinct fixed descriptions and safe groups', async t => {
+test('stackless viewer browser notifications coalesce ResizeObserver repeats and preserve other errors', async t => {
     const harness = setup(t, 'viewer');
     for (const message of [
         'ResizeObserver loop completed with undelivered notifications.',
@@ -162,17 +162,16 @@ test('stackless viewer browser notifications get distinct fixed descriptions and
         harness.dispatch('error', { error: null, message, filename: '', lineno: 0, colno: 0 });
     }
     const events = await harness.events();
-    assert.equal(events.length, 4);
+    assert.equal(events.length, 3);
     assert.deepEqual(events.map(event => event.tags.browser_error), [
-        'resize-observer-loop', 'resize-observer-loop', 'script-error', undefined,
+        'resize-observer-loop', 'script-error', undefined,
     ]);
     assert.deepEqual(events.map(event => event.exception.values[0].value), [
-        'Error: ResizeObserver loop notifications were deferred',
         'Error: ResizeObserver loop notifications were deferred',
         'Error: Script error details were hidden by the browser',
         'Error: Uncaught JavaScript error',
     ]);
-    assert.deepEqual(events[0].fingerprint, events[1].fingerprint);
+    assert.equal(events[0].tags.suppressed_repeats, 0);
     assert.equal(new Set(events.map(event => JSON.stringify(event.fingerprint))).size, 3);
     for (const event of events) {
         assert.equal(event.tags.source, 'viewer');

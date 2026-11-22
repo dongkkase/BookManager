@@ -122,6 +122,7 @@ const ERROR_SIGNALS = new Set(['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGILL', 'SIGTRAP
 const ERROR_SYSCALLS = new Set(['access', 'chmod', 'chown', 'close', 'copyfile', 'fstat', 'fsync', 'ftruncate', 'link', 'lstat', 'mkdir', 'open', 'opendir', 'read', 'readdir', 'readlink', 'realpath', 'rename', 'rmdir', 'scandir', 'spawn', 'stat', 'symlink', 'unlink', 'utime', 'write']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const APP_ROOT = fileURLToPath(new URL('../', import.meta.url));
+const RESIZE_OBSERVER_REPORT_INTERVAL = 60 * 60_000;
 const MAX_PENDING = 40;
 const MAX_CONCURRENT = 2;
 
@@ -213,6 +214,15 @@ function cleanServiceConfig(value = {}) {
     return { sentryDsn, posthogHost, posthogToken };
 }
 
+function isRepeatableResizeObserver(tags, type, frames) {
+    return tags.browser_error === 'resize-observer-loop'
+        && tags.error_kind === 'uncaught-error'
+        && ['renderer', 'viewer'].includes(tags.source)
+        && type === 'Error'
+        && frames.length === 0
+        && !tags.error_code && !tags.error_stage && !tags.ipc_channel;
+}
+
 export function createTelemetry(options = {}) {
     const fsTarget = options.fs || fs;
     const fetchTarget = options.fetch || globalThis.fetch;
@@ -241,6 +251,7 @@ export function createTelemetry(options = {}) {
     const pending = new Set();
     const errorJobs = new Set();
     const sessions = new WeakMap();
+    const resizeObserverReports = new Map();
     const rate = { usage: { since: 0, count: 0 }, errors: { since: 0, count: 0 } };
 
     function getTelemetryStatus() {
@@ -279,6 +290,7 @@ export function createTelemetry(options = {}) {
             if (item.channel === channel) item.controller.abort();
         }
         if (channel === 'errors') {
+            resizeObserverReports.clear();
             client = null;
             clientLoading = null;
         }
@@ -519,6 +531,11 @@ export function createTelemetry(options = {}) {
         }
         const tags = { ...allowedProperties(event.tags), os: platform, ...diagnostics };
         delete tags.duration_ms;
+        const repeats = event.tags?.suppressed_repeats;
+        if (isRepeatableResizeObserver(tags, type, frames)
+            && Number.isInteger(repeats) && repeats >= 0 && repeats <= 1_000_000) {
+            tags.suppressed_repeats = repeats;
+        }
         const reasonDescription = code === 'PROCESS_FAILED' ? ERROR_REASON_DESCRIPTIONS.get(tags.error_reason) : '';
         let processDescription = '';
         if (PROCESS_GONE_SOURCES.has(tags.source)) {
@@ -594,7 +611,7 @@ export function createTelemetry(options = {}) {
 
     function reportTelemetryError(error, context = {}) {
         try {
-            if (!enabled('errors') || outstandingErrors >= 20 || pending.size >= MAX_PENDING || !consumeRate('errors')) return false;
+            if (!enabled('errors')) return false;
             const type = ERROR_NAMES.has(error?.name) ? error.name : 'Error';
             const frames = errorFrames(error);
             const tags = {
@@ -623,6 +640,20 @@ export function createTelemetry(options = {}) {
                 tags,
                 exception: { values: [{ type, ...(frames.length ? { stacktrace: { frames } } : {}) }] },
             });
+            // Coalesce only the known stackless browser notification before the shared error budget.
+            const resizeKey = isRepeatableResizeObserver(event.tags, type, frames) ? event.tags.source : null;
+            const previous = resizeKey ? resizeObserverReports.get(resizeKey) : null;
+            const timestamp = now();
+            if (previous && timestamp >= previous.reportedAt
+                && timestamp - previous.reportedAt < RESIZE_OBSERVER_REPORT_INTERVAL) {
+                previous.suppressedRepeats = Math.min(previous.suppressedRepeats + 1, 1_000_000);
+                return false;
+            }
+            if (outstandingErrors >= 20 || pending.size >= MAX_PENDING || !consumeRate('errors')) return false;
+            if (resizeKey) {
+                event.tags.suppressed_repeats = previous?.suppressedRepeats || 0;
+                resizeObserverReports.set(resizeKey, { reportedAt: timestamp, suppressedRepeats: 0 });
+            }
             const epoch = epochs.errors;
             outstandingErrors += 1;
             const job = ensureClient(epoch).then(readyClient => {

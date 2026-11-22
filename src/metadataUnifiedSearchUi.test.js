@@ -9,6 +9,7 @@ import { resolveBookType } from './metadata/metadataTypes.js';
 import { apiSourceHasRequiredKey, metadataFromApiResult, metadataSearchQueryForItem, UNIFIED_METADATA_API_SOURCE } from './metadataApiPolicy.js';
 import { cleanMetadataSummary } from './metadataPolicy.js';
 import { metadataSearchResultKey, searchMetadata } from './metadataSearch.js';
+import { metadataSearchSettingType, metadataWithoutExcludedSearchTags, normalizeMetadataSearchSettings } from './metadataSearchSettings.js';
 import { isTxtMetadataItem, shouldAutoUseTxtSearchCover, withTxtCoverChange } from './txtMetadataPolicy.js';
 
 const source = readFileSync(new URL('./tabs/MetadataTab.jsx', import.meta.url), 'utf8');
@@ -88,11 +89,11 @@ test('a manually entered search query retains its author, episode range and comp
     assert.equal(h.state().query, query);
 });
 
-function selectionHarness() {
+function selectionHarness({ settings, filePath = '/books/comic.cbz', tagRules = {} } = {}) {
     let batchMetadata = { LanguageISO: 'fr', Manga: 'No', Notes: 'Existing draft note' };
     let closed = 0;
     const context = vm.createContext({
-        activeItem: { filepath: '/books/comic.cbz' },
+        activeItem: { filepath: filePath },
         activeBookType: 'comic',
         activeIsTxt: false,
         isWorking: false,
@@ -101,11 +102,15 @@ function selectionHarness() {
         searchQuery: '',
         currentMetaFieldIds: META_FIELD_IDS,
         currentMetadataExtraFieldIds: [],
-        tagRules: {},
+        tagRules,
+        searchSettings: normalizeMetadataSearchSettings(settings),
+        metadataSearchSettingType,
+        metadataWithoutExcludedSearchTags,
         useCallback: callback => callback,
         metadataFromApiResult,
         cleanMetadataSummary,
         shouldAutoUseTxtSearchCover,
+        apiResultCoverUrl: result => result.coverUrl || '',
         setBatchMetadata: update => { batchMetadata = update(batchMetadata); },
         closeApiSearch: () => { closed += 1; },
         setStatusMessage: () => {},
@@ -151,6 +156,25 @@ test('selecting search metadata preserves an explicit language and reading direc
         assert.equal(h.batch().Notes, 'Existing draft note');
         assert.equal(h.closed(), 1);
     }
+});
+
+test('search selection omits excluded tags before and after tag mapping without affecting other book types', async () => {
+    const metadata = Object.freeze({ Title: '작품', Genre: '판타지', Tags: '연재, 로맨스, Fantasy' });
+    const settings = { comic: { excludedTags: ['연재', '판타지'] }, txt: { excludedTags: ['로맨스'] } };
+    const h = selectionHarness({ settings, tagRules: { fantasy: '판타지' } });
+    await h.select({ metadata });
+    assert.equal(h.batch().Tags, '로맨스');
+    assert.equal(h.batch().Genre, '');
+    assert.equal(metadata.Tags, '연재, 로맨스, Fantasy');
+    const txt = selectionHarness({ settings, filePath: '/books/novel.txt' });
+    await txt.select({ metadata });
+    assert.equal(txt.batch().Tags, '연재, Fantasy');
+    const epub = selectionHarness({ settings, filePath: '/books/novel.epub' });
+    await epub.select({ metadata });
+    assert.equal(epub.batch().Tags, metadata.Tags);
+    const mapped = selectionHarness({ tagRules: { fantasy: '판타지', '판타지': '모험' } });
+    await mapped.select({ metadata: { Tags: 'Fantasy' } });
+    assert.equal(mapped.batch().Tags, '판타지');
 });
 
 function searchHarness({ initialState = {}, fetchDetail, cacheCover, metadataApiEnabled } = {}) {

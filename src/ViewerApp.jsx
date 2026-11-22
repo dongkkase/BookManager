@@ -39,6 +39,7 @@ import { buildEpubOpeningPages, buildOriginalEpubPages, captureEpubReadingPositi
 import { normalizeScrollSettings } from './viewerScroll';
 import { useViewerScroll } from './useViewerScroll';
 import { normalizeViewerFlowMode, resolveViewerFlowMode, textPageOffsets, textPageIndexAtOffset, webtoonZoomForWidth, webtoonWidthReference, webtoonPageSize } from './viewerAutoFlow';
+import { DEFAULT_READER_PAPER_SIZE, READER_PAPER_SIZES, normalizeReaderPaperSize, readerPageFrameSize } from './viewerReaderPageSize';
 import { createWebtoonDetectionSession } from './viewerWebtoonDetection';
 import { loadViewerWebtoonDecision } from './loadViewerWebtoonDecision';
 import { applyMotionPreference } from './motionPolicy';
@@ -205,6 +206,7 @@ const THEMES = [
   { id: 'green', label: '그린', bg: '#dfeedd', fg: '#162018', headerFg: '#4e5a4f', footerFg: '#5e6a5f' },
 ];
 const DEFAULT_READER_SETTINGS = {
+    paperSize: DEFAULT_READER_PAPER_SIZE,
     epubStyle: 'original',
     epubOriginalTheme: 'original',
     epubOriginalVerticalPadding: 40,
@@ -348,8 +350,6 @@ const READER_ALLOWED_HTML_TAGS = new Set([
   'span', 'strong', 'sub', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr',
   'u', 'ul',
 ]);
-const READER_SINGLE_PAGE_MAX_WIDTH = 900;
-const READER_SPREAD_PAGE_MAX_WIDTH = 680;
 const READER_STAGE_PADDING = 14;
 const READER_BASE_FONT_SIZE = 16;
 const LEGACY_READER_BASE_FONT_SIZE = 14;
@@ -1766,6 +1766,7 @@ function normalizeReaderSettings(settings = {}) {
   const { fontSize: _legacyFontSize, ...readerSettings } = merged;
   return {
     ...readerSettings,
+    paperSize: normalizeReaderPaperSize(merged.paperSize),
     epubStyle: EPUB_STYLE_OPTIONS.some(item => item.id === merged.epubStyle) ? merged.epubStyle : DEFAULT_READER_SETTINGS.epubStyle,
     epubOriginalTheme: THEMES.some(item => item.id === merged.epubOriginalTheme) ? merged.epubOriginalTheme : 'original',
     epubOriginalVerticalPadding: clampNumber(merged.epubOriginalVerticalPadding, 0, 80, DEFAULT_READER_SETTINGS.epubOriginalVerticalPadding),
@@ -2971,7 +2972,7 @@ function ToolbarButton({ title, disabled = false, onClick, icon, iconSize = 14, 
   );
 }
 
-function ViewerDropdown({ value, options, onChange, onNotice, onPreview, previewingValue = '', previewTitle = '', title = '', className = '', buttonIcon = '', buttonIconSrc = '', buttonLabel = '', focusSelectedOnOpen = false }) {
+function ViewerDropdown({ value, options, onChange, onNotice, onPreview, previewingValue = '', previewTitle = '', renderOptionIcon, title = '', className = '', buttonIcon = '', buttonIconSrc = '', buttonLabel = '', focusSelectedOnOpen = false }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
@@ -3037,6 +3038,7 @@ function ViewerDropdown({ value, options, onChange, onNotice, onPreview, preview
       >
         {buttonIcon ? <FaIcon name={buttonIcon} /> : null}
         {buttonIconSrc ? <img className="viewer-dropdown-icon-image" src={buttonIconSrc} alt="" aria-hidden="true" /> : null}
+        {renderOptionIcon?.(selected)}
         {!hasButtonIcon || hasIconLabel ? <span>{displayedLabel}</span> : null}
         <FaIcon name="caretDown" size={hasButtonIcon ? 8 : 11} />
       </button>
@@ -3082,6 +3084,7 @@ function ViewerDropdown({ value, options, onChange, onNotice, onPreview, preview
                     closeAndRestoreFocus();
                   }}
                 >
+                    {renderOptionIcon?.(option)}
                   <span>{viewerText(option.labelKey, option.label)}</span>
                   {option.id === selected.id ? <FaIcon name="check" size={11} /> : null}
                 </button>
@@ -5689,6 +5692,23 @@ function ReaderSegmentedSetting({ label, value, options, onChange, disabled = fa
   );
 }
 
+function ReaderPaperPreview({ paper }) {
+    if (!paper.width || !paper.height) {
+        return (
+            <span className="viewer-paper-preview is-screen" aria-hidden="true">
+                <FaIcon name="desktop" size={24} />
+            </span>
+        );
+    }
+    const height = 40;
+    const width = height * paper.width / paper.height;
+    return (
+        <svg className="viewer-paper-preview" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+            <rect className="viewer-paper-preview-sheet" x={(48 - width) / 2} y={4} width={width} height={height} rx={1} />
+        </svg>
+    );
+}
+
 function ReaderSettingsPanel({
   open,
   sessionType,
@@ -5765,6 +5785,21 @@ function ReaderSettingsPanel({
                         options={COVER_DISPLAY_OPTIONS}
                         onChange={value => onSpreadCoverFirstChange(value === 'single')}
                     />
+                )}
+                {showReaderSettings && (
+                    <div className="viewer-setting-field viewer-paper-size-setting">
+                        <span>{viewerText('viewer.settings.paper_size', '용지 판형')}</span>
+                        <ViewerDropdown
+                            title={viewerText('viewer.settings.paper_size', '용지 판형')}
+                            value={settings.paperSize}
+                            options={READER_PAPER_SIZES}
+                            renderOptionIcon={paper => <ReaderPaperPreview paper={paper} />}
+                            onChange={paperSize => onChange({ paperSize })}
+                        />
+                        <p className="viewer-setting-description">
+                            {viewerText('viewer.settings.paper_size_help', '페이지 보기에서 선택한 책의 비율을 유지하며 창 안에 맞춥니다. 스크롤 보기에는 적용하지 않습니다.')}
+                        </p>
+                    </div>
                 )}
                 {effectiveFlowMode === 'scroll' && (
                     <ViewerScrollOptions
@@ -6296,6 +6331,8 @@ function ViewerApp() {
   }, [pageIndex]);
 
   const isReaderDocument = session?.type === 'epub' || session?.type === 'text';
+    const supportsViewControls = session?.type === 'comic' || session?.type === 'pdf'
+        || (session?.type === 'epub' && (flowMode === 'scroll' || readerSettings.paperSize === 'screen'));
     const epubOriginalAvailable = session?.type === 'epub' && epubChapters.length > 0 && epubChapters.every(chapter => chapter.original?.html);
     const isOriginalEpub = Boolean(epubOriginalAvailable && readerSettings.epubStyle === 'original');
   const supportsNavigationPanel = session?.type === 'epub' || session?.type === 'pdf' || session?.type === 'text';
@@ -6305,8 +6342,6 @@ function ViewerApp() {
   const readerFontScale = (Number(readerSettings.fontScale) || 100) / 100;
   const readerFontSize = READER_BASE_FONT_SIZE * readerFontScale * ((Number(zoom) || 100) / 100);
   const readerPageMetrics = useMemo(() => {
-    const pageColumns = flowMode === 'spread' ? 2 : 1;
-    const stageGap = flowMode === 'spread' ? 0 : 10;
     const horizontalPadding = Number(readerSettings.horizontalPadding) || 0;
     const verticalPadding = Number(readerSettings.verticalPadding) || 0;
     const paragraphSpacing = Number(readerSettings.paragraphSpacing) || 0;
@@ -6314,19 +6349,18 @@ function ViewerApp() {
     const footerSpace = readerSettings.showFooter ? READER_FOOTER_SPACE : 0;
     const isVerticalText = readerSettings.textDirection === 'vertical';
     const pageOuterPadding = horizontalPadding * 2;
-    const stageWidth = Math.max(280, (Number(readerViewport.width) || 900) - (READER_STAGE_PADDING * 2));
-    const isReaderWidthFit = session?.type === 'epub' && viewMode === 'width';
-    const defaultMaxPageWidth = flowMode === 'spread' ? READER_SPREAD_PAGE_MAX_WIDTH : READER_SINGLE_PAGE_MAX_WIDTH;
-    const maxPageWidth = isReaderWidthFit
-      ? Math.max(220, (stageWidth - stageGap) / pageColumns)
-      : defaultMaxPageWidth;
-    const pageFrameWidth = Math.min(maxPageWidth, Math.max(220, (stageWidth - stageGap) / pageColumns));
+    const { width: pageFrameWidth, height: pageFrameHeight } = readerPageFrameSize({
+        viewport: readerViewport,
+        flowMode,
+        paperSize: readerSettings.paperSize,
+        widthFit: session?.type === 'epub' && viewMode === 'width',
+        stagePadding: READER_STAGE_PADDING,
+    });
     const pageWidth = Math.max(160, pageFrameWidth - pageOuterPadding);
     const charAdvance = (readerSettings.wrapMode === 'char'
       ? readerFontSize
       : readerFontSize * 0.62) + letterSpacing;
     const lineAdvance = readerFontSize * lineHeight;
-    const pageFrameHeight = Math.max(260, (Number(readerViewport.height) || 700) - (READER_STAGE_PADDING * 2));
     const availableHeight = Math.max(220, pageFrameHeight - (verticalPadding * 2) - footerSpace - READER_PAGE_BOTTOM_GUARD);
     const mixedImageMaxHeight = Math.max(140, Math.floor(availableHeight * READER_MIXED_IMAGE_HEIGHT_RATIO));
     const charsPerLine = isVerticalText
@@ -6359,6 +6393,7 @@ function ViewerApp() {
     flowMode,
     lineHeight,
     readerFontSize,
+    readerSettings.paperSize,
     readerSettings.horizontalPadding,
     readerSettings.letterSpacing,
     readerSettings.paragraphSpacing,
@@ -6458,6 +6493,7 @@ function ViewerApp() {
     readerViewport.width,
     readerViewport.height,
     readerSettings.fontFamily,
+    readerSettings.paperSize,
     readerSettings.fontScale,
     readerSettings.horizontalPadding,
     readerSettings.letterSpacing,
@@ -6474,6 +6510,7 @@ function ViewerApp() {
     epubMeasurementBlocks.length,
     flowMode,
     readerSettings.fontFamily,
+    readerSettings.paperSize,
     readerSettings.fontScale,
     readerSettings.horizontalPadding,
     readerSettings.letterSpacing,
@@ -8015,6 +8052,7 @@ function ViewerApp() {
   }, [
     epubChapters,
     flowMode,
+    readerSettings.paperSize,
     readerSettings.fontFamily,
     readerSettings.fontScale,
     readerSettings.horizontalPadding,
@@ -8345,7 +8383,7 @@ function ViewerApp() {
         if (session.type === 'epub' && epubPositionPendingRef.current) return;
         if (session.type === 'text' && !loading && readiveResumeReady) {
             const previous = textLayoutPositionRef.current;
-            const continuesPosition = selectedFlowMode === 'auto' && previous?.sessionId === session.id
+            const continuesPosition = previous?.sessionId === session.id
                 && (previous.pages !== textPages
                     || (previous.pageIndex === pageIndex && previous.selectedPageIndex === selectedPageIndex));
             const offset = continuesPosition ? previous.offset : textOffsets[selectedPageIndex] || 0;
@@ -9646,13 +9684,13 @@ function ViewerApp() {
                 resetScrollZoomOffset();
         setViewMode('actual');
         setZoom(100);
-      } else if (event.key === '9' && (session?.type === 'comic' || session?.type === 'pdf' || session?.type === 'epub')) {
+      } else if (event.key === '9' && supportsViewControls) {
                 resetScrollZoomOffset();
         setViewMode('fit');
-      } else if (event.key === '8' && (session?.type === 'comic' || session?.type === 'pdf' || session?.type === 'epub')) {
+      } else if (event.key === '8' && supportsViewControls) {
                 resetScrollZoomOffset();
         setViewMode('height');
-      } else if (event.key === '7' && (session?.type === 'comic' || session?.type === 'pdf' || session?.type === 'epub')) {
+      } else if (event.key === '7' && supportsViewControls) {
                 resetScrollZoomOffset();
         setViewMode('width');
       } else if (event.key.toLowerCase() === 'b') {
@@ -9673,7 +9711,7 @@ function ViewerApp() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [addBookmark, adjustZoom, autoScrolling, bookmarkEditorOpen, bookmarkMenuOpen, flushReadingActivity, goBoundaryPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, readerSettings.arrowKeyMode, readingDirection, resetScrollZoomOffset, restoreViewerFocus, selectionMenu, selectionSubmenu, session?.type, settingsOpen, stopAutoScroll, toggleFullscreen, toggleToolbarPinned, zoomStep]);
+  }, [addBookmark, adjustZoom, autoScrolling, bookmarkEditorOpen, bookmarkMenuOpen, flushReadingActivity, goBoundaryPage, helpOpen, imageLightbox, isViewerShortcutBlockedTarget, lookupPanel, moveAdjacentBook, movePage, navigationPanelOpen, openNavigationSearch, openNavigationToc, readerSettings.arrowKeyMode, readingDirection, resetScrollZoomOffset, restoreViewerFocus, selectionMenu, selectionSubmenu, session?.type, settingsOpen, stopAutoScroll, supportsViewControls, toggleFullscreen, toggleToolbarPinned, zoomStep]);
 
   const getComicSpreadPagesForIndex = useCallback(index => {
     if (pageCount === 0) return [];
@@ -10007,6 +10045,13 @@ function ViewerApp() {
     ...(session?.type === 'epub' && viewMode === 'width' ? { maxWidth: 'none' } : {}),
   };
 
+    const readerPageStyle = {
+        width: readerPageMetrics.pageFrameWidth,
+        height: readerPageMetrics.pageFrameHeight,
+        maxWidth: 'none',
+        flex: '0 0 auto',
+    };
+
     const isEpubMediaPageActive = sourceIndex => flowMode === 'scroll' || (sourceIndex >= pageIndex && sourceIndex < pageIndex + (flowMode === 'spread' ? 2 : 1));
     const renderOriginalEpubDocument = (item, mode, sourceIndex = pageIndex) => (
         <div className="viewer-epub-original-scale">
@@ -10219,7 +10264,7 @@ function ViewerApp() {
             key={reuseOriginalFrames ? `chapter-${item.chapterIndex}-slot-${index}` : `chapter-${item.chapterIndex}-column-${item.originalPageOffset}-${index}-${extraClassName || 'page'}`}
             className={`viewer-text-page is-original-reader ${extraClassName}`.trim()}
             data-reader-page-index={sourceIndex}
-            style={{ width: epubOriginalPageSize.width * epubOriginalScale, overflow: item.originalChapter?.original?.layout === 'pre-paginated' ? 'auto' : 'hidden', background: epubOriginalAppearance.theme?.bg }}
+            style={{ ...readerPageStyle, overflow: item.originalChapter?.original?.layout === 'pre-paginated' ? 'auto' : 'hidden', background: epubOriginalAppearance.theme?.bg }}
         >
             {renderOriginalEpubDocument(item, 'page', sourceIndex)}
         </article>
@@ -10228,7 +10273,7 @@ function ViewerApp() {
         key={`${sourceIndex}-${index}-${extraClassName || 'page'}`}
         className={`viewer-text-page viewer-reader-scope ${readerTypeClassName} ${item.hasImage ? 'has-reader-image' : ''} ${item.standaloneImage ? 'has-epub-image' : ''} ${extraClassName}`.trim()}
         data-reader-page-index={sourceIndex}
-        style={readerStyle}
+        style={{ ...readerStyle, ...readerPageStyle }}
       >
         <div className="viewer-reader-page-body">
           {readerSettings.showHeader && item.title ? <h2>{item.title}</h2> : null}
@@ -10240,8 +10285,8 @@ function ViewerApp() {
     const spread = flowMode === 'spread';
     if (readerSettings.pageEffect === 'page' && spread) {
       const pageSize = {
-        width: Math.max(180, Math.round(readerPageMetrics.pageFrameWidth || getFlipBookPageSize(spread ? 2 : 1).width)),
-        height: Math.max(260, Math.round(readerPageMetrics.pageFrameHeight || getFlipBookPageSize(spread ? 2 : 1).height)),
+        width: readerPageMetrics.pageFrameWidth,
+        height: readerPageMetrics.pageFrameHeight,
       };
       return (
         <ViewerFlipBook
@@ -10472,7 +10517,6 @@ function ViewerApp() {
     return <div className="viewer-state">{viewerText('viewer.common.unsupported', 'Unsupported')}</div>;
   };
   const supportsFlowControls = session?.type === 'comic' || session?.type === 'pdf' || isReaderDocument;
-  const supportsViewControls = session?.type === 'comic' || session?.type === 'pdf' || session?.type === 'epub';
   const supportsZoomControls = session?.type === 'comic' || session?.type === 'pdf' || isReaderDocument;
   const supportsBackgroundSettings = session?.type === 'comic' || session?.type === 'pdf' || session?.type === 'epub' || session?.type === 'text';
   const supportsSettingsButton = supportsBackgroundSettings || isReaderDocument;
@@ -11250,6 +11294,7 @@ function ViewerApp() {
         onChange={updateReaderSettings}
         onReset={() => isOriginalEpub
             ? updateReaderSettings({
+                paperSize: DEFAULT_READER_PAPER_SIZE,
                 epubOriginalTheme: 'original',
                 epubOriginalVerticalPadding: DEFAULT_READER_SETTINGS.epubOriginalVerticalPadding,
                 epubOriginalHorizontalPadding: DEFAULT_READER_SETTINGS.epubOriginalHorizontalPadding,

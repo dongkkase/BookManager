@@ -6,6 +6,8 @@ import { AudiobookMetadataEditor } from '../components/metadata/AudiobookMetadat
 import { BookMetadataEditor } from '../components/metadata/BookMetadataEditor';
 import { ComicMetadataEditor } from '../components/metadata/ComicMetadataEditor';
 import { PdfMetadataEditor } from '../components/metadata/PdfMetadataEditor';
+import { MetadataSearchSettingsDialog } from '../components/metadata/MetadataSearchSettingsDialog';
+import { TagInput, splitTagValues, joinTagValues } from '../components/metadata/MetadataTagInput';
 import { ResultLogDialog } from '../components/ResultLogDialog';
 import { createToolbarState, emitToolbarState } from '../toolbarState';
 import { emitStatusState } from '../statusState';
@@ -49,6 +51,15 @@ import {
   preferredMetadataApiSource,
 } from '../metadataApiPolicy';
 import { metadataSearchResultKey, searchMetadata } from '../metadataSearch';
+import {
+    filterMetadataSearchResults,
+    isMetadataSearchTagExcluded,
+    metadataSearchResultTags,
+    metadataSearchSettingType,
+    metadataWithoutExcludedSearchTags,
+    normalizeMetadataSearchSettings,
+    toggleMetadataSearchExcludedTag,
+} from '../metadataSearchSettings';
 import { comicVineSearchThumbnail, createComicVineSearchEnricher, mergeComicVineSearchEnrichment } from '../comicVineSearchEnrichment';
 import {
   AUDIOBOOK_BASIC_FIELDS,
@@ -226,25 +237,6 @@ function AutoHeightTextarea({ className = 'meta-input', value = '', onChange }) 
   );
 }
 
-function splitTagValues(value = '') {
-  return String(value || '')
-    .split(',')
-    .map(part => part.trim())
-    .filter(Boolean);
-}
-
-function joinTagValues(values = []) {
-  const seen = new Set();
-  const tags = [];
-  for (const value of values) {
-    const tag = String(value || '').trim();
-    if (!tag || seen.has(tag)) continue;
-    seen.add(tag);
-    tags.push(tag);
-  }
-  return tags.join(', ');
-}
-
 function pickMetadataFields(metadata = {}, fieldIds = [], extraFieldIds = []) {
   const allowed = new Set([...fieldIds, ...extraFieldIds]);
   return Object.fromEntries(
@@ -370,7 +362,7 @@ function languageIsoFromConfig(value = '') {
   return normalized || 'ko';
 }
 
-function MetadataTab({ config, t, showToast }) {
+function MetadataTab({ config, saveConfig, t, showToast }) {
     const metadataTabRef = useRef(null);
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -408,6 +400,10 @@ function MetadataTab({ config, t, showToast }) {
     const apiSearchRequestRef = useRef(0);
     const comicVineDetailsRef = useRef({ requestId: 0, requests: new Map() });
     const comicVineEnrichmentRef = useRef(null);
+    const searchSettings = useMemo(() => normalizeMetadataSearchSettings(config?.metadata_search_settings), [config?.metadata_search_settings]);
+    const saveSearchSettings = useCallback(async settings => {
+        await saveConfig({ metadata_search_settings: normalizeMetadataSearchSettings(settings) });
+    }, [saveConfig]);
     const closeApiSearch = useCallback(() => {
         apiSearchRequestRef.current += 1;
         setApiSearch(prev => ({ ...prev, open: false, loading: false }));
@@ -594,6 +590,7 @@ function MetadataTab({ config, t, showToast }) {
   const activeEpubImages = activeEpubImageState.images || [];
   const isSameActiveBookType = (item) => Boolean(activeItem) && resolveBookType(item || {}) === activeBookType;
     const metadataApiEnabledKey = ALL_METADATA_API_SOURCES.map(source => config?.metadata_api_enabled?.[source.value] !== false).join(',');
+    const metadataApiKeysKey = JSON.stringify(config?.api_keys || {});
     const currentApiSources = useMemo(() => metadataSearchSourcesForBookType(activeBookType, config?.metadata_api_enabled), [activeBookType, metadataApiEnabledKey]);
     useEffect(() => {
         closeApiSearch();
@@ -758,7 +755,7 @@ function MetadataTab({ config, t, showToast }) {
     setApiSearch(prev => prev.open ? prev : { ...prev, apiSource: nextSource });
   }, [
     activeBookType,
-    config?.api_keys,
+    metadataApiKeysKey,
     metadataApiEnabledKey,
     config?.last_meta_api,
     config?.preferred_meta_api_book,
@@ -1086,7 +1083,7 @@ function MetadataTab({ config, t, showToast }) {
 
   const applyMetadataToBatch = (metadata = {}) => {
     const normalized = pickMetadataFields(
-      normalizeMetadata(metadata),
+        metadataWithoutExcludedSearchTags(metadata, searchSettings[metadataSearchSettingType(activeItem)], normalizeMetadata),
       currentMetaFieldIds,
       currentMetadataExtraFieldIds,
     );
@@ -1096,7 +1093,7 @@ function MetadataTab({ config, t, showToast }) {
   const applyMetadataToSeries = (metadata = {}) => {
     if (!activeItem) return;
     const normalized = pickMetadataFields(
-      normalizeMetadata(metadata),
+        metadataWithoutExcludedSearchTags(metadata, searchSettings[metadataSearchSettingType(activeItem)], normalizeMetadata),
       currentMetaFieldIds,
       currentMetadataExtraFieldIds,
     );
@@ -1569,7 +1566,7 @@ function MetadataTab({ config, t, showToast }) {
                 : result.error || text('t3_msg_auto_match_failed', '자동 매칭에 실패했습니다.'));
         return;
       }
-      const first = result.results?.[0];
+      const first = filterMetadataSearchResults(result.results || [], searchSettings[metadataSearchSettingType(activeItem)])[0];
       if (!first) {
         setStatusMessage(text('t3_msg_auto_match_empty', '자동 매칭 결과가 없습니다.'));
         showToast?.(t('t3_msg_no_search_result'));
@@ -1582,7 +1579,7 @@ function MetadataTab({ config, t, showToast }) {
             });
       applyMetadataToSeries(firstMetadata);
       setBatchMetadata(pickMetadataFields(
-        normalizeMetadata(firstMetadata),
+        metadataWithoutExcludedSearchTags(firstMetadata, searchSettings[metadataSearchSettingType(activeItem)], normalizeMetadata),
         currentMetaFieldIds,
         currentMetadataExtraFieldIds,
       ));
@@ -2879,6 +2876,9 @@ function MetadataTab({ config, t, showToast }) {
           apiSource={apiSource}
           apiSources={currentApiSources}
           bookType={activeBookType}
+            searchSettings={searchSettings}
+            searchSettingType={metadataSearchSettingType(activeItem)}
+            onSaveSearchSettings={saveSearchSettings}
           t={t}
           onClose={closeApiSearch}
           onSelect={handleSelectApiResult}
@@ -3011,96 +3011,13 @@ function SearchableSelect({ className, value, options, optionLabel, allowCustom 
   );
 }
 
-function TagInput({ className = '', value, placeholder = '', disabled = false, onChange }) {
-  const inputRef = useRef(null);
-    const isComposingRef = useRef(false);
-    const pendingBlurRef = useRef(false);
-  const [draft, setDraft] = useState('');
-  const tags = useMemo(() => splitTagValues(value), [value]);
-
-  const updateTags = useCallback((nextTags) => {
-    onChange(joinTagValues(nextTags));
-  }, [onChange]);
-
-  const commitDraft = useCallback((nextDraft = inputRef.current?.value ?? draft) => {
-    const additions = splitTagValues(nextDraft);
-    if (additions.length === 0) return;
-    updateTags([...tags, ...additions]);
-    setDraft('');
-  }, [draft, tags, updateTags]);
-
-  const removeTag = useCallback((targetTag) => {
-    updateTags(tags.filter(tag => tag !== targetTag));
-  }, [tags, updateTags]);
-
-  return (
-    <div
-      className={`meta-tag-input ${className} ${disabled ? 'disabled' : ''}`.trim()}
-      onClick={() => inputRef.current?.focus()}
-    >
-      {tags.map(tag => (
-        <span className="meta-tag-chip" key={tag}>
-          <span className="meta-tag-chip-text">{tag}</span>
-          <button
-            type="button"
-            disabled={disabled}
-            onMouseDown={event => event.preventDefault()}
-            onClick={(event) => {
-              event.stopPropagation();
-              removeTag(tag);
-            }}
-            aria-label={`Remove ${tag}`}
-          >
-            ×
-          </button>
-        </span>
-      ))}
-      <input
-        ref={inputRef}
-        type="text"
-        value={draft}
-        disabled={disabled}
-        placeholder={tags.length === 0 ? placeholder : ''}
-        onChange={event => setDraft(event.target.value)}
-        onCompositionStart={() => {
-            isComposingRef.current = true;
-            pendingBlurRef.current = false;
-        }}
-        onCompositionEnd={event => {
-            isComposingRef.current = false;
-            const nextDraft = event.currentTarget.value;
-            setDraft(nextDraft);
-            if (pendingBlurRef.current) {
-                pendingBlurRef.current = false;
-                commitDraft(nextDraft);
-            }
-        }}
-        onBlur={event => {
-            if (isComposingRef.current) {
-                pendingBlurRef.current = true;
-                return;
-            }
-            commitDraft(event.currentTarget.value);
-        }}
-        onKeyDown={(event) => {
-            if (isComposingRef.current || event.nativeEvent?.isComposing || event.nativeEvent?.keyCode === 229) return;
-          if (event.key === 'Enter' || event.key === ',') {
-            event.preventDefault();
-            commitDraft();
-          } else if (event.key === 'Backspace' && draft === '' && tags.length > 0) {
-            event.preventDefault();
-            removeTag(tags[tags.length - 1]);
-          }
-        }}
-      />
-    </div>
-  );
-}
-
 function MetadataSearchDialog({
   state,
   apiSources,
   bookType = 'comic',
+    searchSettings = {},
+    searchSettingType = 'comic',
+    onSaveSearchSettings,
   onClose,
   onSelect,
   onUseCover,
@@ -3125,6 +3042,14 @@ function MetadataSearchDialog({
   const [translationError, setTranslationError] = useState('');
   const [clearingCache, setClearingCache] = useState(false);
   const [cacheError, setCacheError] = useState('');
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [savingTag, setSavingTag] = useState(false);
+    const savingTagRef = useRef(false);
+    const [settingsError, setSettingsError] = useState('');
+    const settingsButtonRef = useRef(null);
+    const activeSearchSettings = searchSettings[searchSettingType];
+    const resultFilterKey = JSON.stringify([activeSearchSettings?.excludedTitleTerms, activeSearchSettings?.excludedResultTags]);
+    const visibleResults = useMemo(() => filterMetadataSearchResults(state.results, activeSearchSettings), [state.results, activeSearchSettings]);
   const [aiTitleCandidates, setAiTitleCandidates] = useState([]);
   const [aiTitleLoading, setAiTitleLoading] = useState(false);
   const [aiTitleError, setAiTitleError] = useState('');
@@ -3138,7 +3063,7 @@ function MetadataSearchDialog({
         return () => { dialogRequestRef.current = null; };
     }, [state.requestId]);
   const resolvingRidiDates = useRef(new Set());
-  const rawSelected = state.results[selectedIndex];
+    const rawSelected = visibleResults[selectedIndex];
     const comicVineDetailPending = Boolean(rawSelected && (rawSelected.apiSource || state.apiSource) === 'Vine'
         && (rawSelected.id || rawSelected.ID) && !rawSelected.comicVineDetailResolved && !rawSelected.comicVineDetailError);
     const selectedResultKey = rawSelected ? metadataSearchResultKey(rawSelected, state.apiSource) : '';
@@ -3190,6 +3115,7 @@ function MetadataSearchDialog({
 
   useEffect(() => {
     const handleEscape = (event) => {
+        if (settingsOpen) return;
       if (event.key !== 'Escape') return;
       event.preventDefault();
       event.stopPropagation();
@@ -3202,7 +3128,7 @@ function MetadataSearchDialog({
 
     window.addEventListener('keydown', handleEscape, true);
     return () => window.removeEventListener('keydown', handleEscape, true);
-  }, [aiTitleMenuOpen, onClose]);
+  }, [aiTitleMenuOpen, onClose, settingsOpen]);
 
   useEffect(() => {
     setAiTitleCandidates([]);
@@ -3213,15 +3139,15 @@ function MetadataSearchDialog({
 
   useEffect(() => {
     setSelectedIndex(0);
-  }, [state.apiSource, state.page, state.query]);
+  }, [state.apiSource, state.page, state.query, resultFilterKey]);
 
   useEffect(() => {
-    setSelectedIndex(prev => Math.min(prev, Math.max(0, state.results.length - 1)));
-  }, [state.results.length]);
+    setSelectedIndex(prev => Math.min(prev, Math.max(0, visibleResults.length - 1)));
+  }, [visibleResults.length]);
 
   useEffect(() => {
     resultRefs.current[selectedIndex]?.scrollIntoView?.({ block: 'nearest' });
-  }, [selectedIndex, state.requestId, state.results.length]);
+  }, [selectedIndex, state.requestId, visibleResults.length]);
 
   useEffect(() => {
         translationRequestRef.current += 1;
@@ -3415,13 +3341,24 @@ function MetadataSearchDialog({
     || [metadataValue(selected, 'Year'), metadataValue(selected, 'Month'), metadataValue(selected, 'Day')].filter(Boolean).join('-')
   );
   const selectedIsbn = selected ? metadataValue(selected, 'ISBN', 'isbn') : '';
-  const selectedTags = selected
-    ? String(metadataValue(selected, 'tags', 'Tags') || '')
-        .split(/[,/|]/)
-        .map(tag => tag.trim())
-        .filter(Boolean)
-        .slice(0, 10)
-    : [];
+    const selectedTags = selected ? metadataSearchResultTags(selected) : [];
+    const toggleExcludedTag = async tag => {
+        if (savingTagRef.current) return;
+        savingTagRef.current = true;
+        setSavingTag(true);
+        setSettingsError('');
+        try {
+            await onSaveSearchSettings({
+                ...searchSettings,
+                [searchSettingType]: toggleMetadataSearchExcludedTag(activeSearchSettings, tag),
+            });
+        } catch (error) {
+            setSettingsError(t('config_save_failed', { msg: error?.message || String(error) }));
+        } finally {
+            savingTagRef.current = false;
+            setSavingTag(false);
+        }
+    };
   const detailLabel = (icon, label) => (
     <>
       <FaIcon name={icon} className="meta-api-field-icon" size={11} />
@@ -3452,16 +3389,17 @@ function MetadataSearchDialog({
 
   const moveSelectedResult = useCallback((delta) => {
     setSelectedIndex(prev => {
-      const count = state.results.length;
+      const count = visibleResults.length;
       if (count === 0) return 0;
       const current = prev < 0 || prev >= count
         ? (delta > 0 ? -1 : count)
         : prev;
       return Math.max(0, Math.min(count - 1, current + delta));
     });
-  }, [state.results.length]);
+  }, [visibleResults.length]);
 
   const handleShortcut = useCallback((event) => {
+    if (settingsOpen || savingTag) return;
     if (event.defaultPrevented || event.repeat) return;
     const targetTag = String(event.target?.tagName || '').toUpperCase();
     const code = shortcutCode(event);
@@ -3474,7 +3412,7 @@ function MetadataSearchDialog({
     const isDialogTextInput = isMetadataTextInput(event.target) && dialogRef.current?.contains?.(event.target);
     if (event.target?.dataset?.aiTitleInput === 'true') return;
     if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && targetTag !== 'SELECT') {
-      if (state.loading || state.results.length === 0) return;
+      if (state.loading || visibleResults.length === 0) return;
       event.preventDefault();
       event.stopPropagation();
       moveSelectedResult(event.key === 'ArrowUp' ? -1 : 1);
@@ -3494,7 +3432,7 @@ function MetadataSearchDialog({
       event.stopPropagation();
       onSelect(selected);
     }
-  }, [comicVineDetailPending, dialogApi, dialogQuery, moveSelectedResult, onSearch, onSelect, onUseCover, selected, selectedCoverUrl, state.loading, state.results.length]);
+  }, [comicVineDetailPending, dialogApi, dialogQuery, moveSelectedResult, onSearch, onSelect, onUseCover, selected, selectedCoverUrl, state.loading, visibleResults.length, settingsOpen, savingTag]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleShortcut, true);
@@ -3593,18 +3531,20 @@ function MetadataSearchDialog({
             <button onClick={() => runSearch(1)} disabled={state.loading || !dialogQuery.trim()}><FaIcon name="search" /> {text('btn_search', '검색')} (S)</button>
             <button
               type="button"
-              className="meta-api-cache-clear-btn"
-              title={text('btn_clear_cache', '검색 캐시 비우기')}
-              onClick={clearSearchCache}
-              disabled={state.loading || clearingCache}
+                ref={settingsButtonRef}
+                className="meta-api-settings-btn"
+                aria-label={t('metadata_search_settings.title')}
+                data-tooltip={t('metadata_search_settings.title')}
+                onClick={() => setSettingsOpen(true)}
+                disabled={savingTag}
             >
-              <FaIcon name="trash" size={11} />
-              {clearingCache ? text('meta_cache_clearing', '삭제 중...') : text('btn_clear_cache', '캐시 비우기')}
+                <FaIcon name="gear" size={16} />
             </button>
           </div>
         </div>
         {aiTitleError && <div className="meta-api-header-error">{aiTitleError}</div>}
         {cacheError && <div className="meta-api-header-error">{cacheError}</div>}
+        {settingsError && <div className="meta-api-header-error" role="alert">{settingsError}</div>}
         {state.failures?.length > 0 && !state.error && (
             <div className="meta-api-header-error" role="status" title={state.failures.map(failure => `${apiSourceLabel(failure.apiSource)}: ${failure.error || ''}`).join('\n')}>
                 {text('meta_search_partial_failed', '일부 API 검색에 실패했습니다: {sources}', {
@@ -3617,8 +3557,8 @@ function MetadataSearchDialog({
           <div className="meta-api-results">
             {state.loading && <div className="meta-api-empty">{text('meta_search_loading', '검색 중...')}</div>}
             {state.error && <div className="meta-api-empty error" title={state.failures?.map(failure => `${apiSourceLabel(failure.apiSource)}: ${failure.error || ''}`).join('\n')}>{state.error}</div>}
-            {!state.loading && !state.error && state.results.length === 0 && <div className="meta-api-empty">{text('meta_search_empty', '검색 결과가 없습니다.')}</div>}
-            {state.results.map((result, index) => (
+            {!state.loading && !state.error && visibleResults.length === 0 && <div className="meta-api-empty">{text('meta_search_empty', '검색 결과가 없습니다.')}</div>}
+            {visibleResults.map((result, index) => (
               <button
                 key={metadataSearchResultKey(result, state.apiSource)}
                 ref={node => {
@@ -3655,7 +3595,7 @@ function MetadataSearchDialog({
             <button onClick={() => runSearch(Math.max(1, (state.page || 1) - 1))} disabled={state.loading || (state.page || 1) <= 1}><FaIcon name="chevronLeft" size={10} />{text('api_page_prev', '이전')}</button>
             <span className="meta-api-page-status">
               <strong>{text('api_page_info', `${state.page || 1} 페이지`, { page: state.page || 1 })}</strong>
-              <small>{text('search_result_prefix', '검색 결과:')} {state.results.length}{text('search_result_suffix', '건')}</small>
+              <small>{text('search_result_prefix', '검색 결과:')} {visibleResults.length}{text('search_result_suffix', '건')}</small>
             </span>
             <button onClick={() => runSearch((state.page || 1) + 1)} disabled={state.loading || !state.hasNext}>{text('api_page_next', '다음')}<FaIcon name="chevronRight" size={10} /></button>
           </div>
@@ -3689,7 +3629,13 @@ function MetadataSearchDialog({
                     {comicVineDetailPending && <div role="status">{text('loading', '로딩 중...')}</div>}
                     {rawSelected?.comicVineDetailError && <div className="meta-api-translation-error" role="alert">{rawSelected.comicVineDetailError}</div>}
                   <div className="meta-api-preview-tags">
-                    {selectedTags.map(tag => <span key={tag}>{tag}</span>)}
+                    {selectedTags.map(tag => {
+                        const excluded = isMetadataSearchTagExcluded(tag, activeSearchSettings);
+                        const tooltip = t(`metadata_search_settings.${excluded ? 'include_tag' : 'exclude_tag'}`);
+                        return <button key={tag} type="button" className={excluded ? 'excluded' : ''}
+                            aria-pressed={!excluded} aria-label={`${tag}: ${tooltip}`} data-tooltip={tooltip}
+                            disabled={savingTag} onClick={() => toggleExcludedTag(tag)}>{tag}</button>;
+                    })}
                   </div>
                   <div className="meta-api-preview-main">
                     <RemoteCoverImage src={comicVineSearchThumbnail(rawSelected)} className="meta-api-large-cover" fallbackClassName="meta-api-large-no-cover" size={48} />
@@ -3762,10 +3708,15 @@ function MetadataSearchDialog({
                 {text('btn_use_cover', '표지 사용(X)')}
               </button>
             )}
-            <button className="primary" title="C" disabled={!selected || comicVineDetailPending} onClick={() => selected && onSelect(selected)}><FaIcon name="check" size={11} />{text('btn_select', '선택')} (C)</button>
+            <button className="primary" title="C" disabled={!selected || comicVineDetailPending || savingTag} onClick={() => selected && onSelect(selected)}><FaIcon name="check" size={11} />{text('btn_select', '선택')} (C)</button>
           </div>
         </div>
       </div>
+        {settingsOpen && <MetadataSearchSettingsDialog
+            settings={searchSettings} initialType={searchSettingType} onSave={onSaveSearchSettings}
+            onClose={() => { setSettingsOpen(false); settingsButtonRef.current?.focus(); }}
+            onClearCache={clearSearchCache} clearingCache={clearingCache} cacheError={cacheError}
+            searchLoading={state.loading} t={t} />}
     </div>
   );
 }
@@ -3803,5 +3754,5 @@ function RemoteCoverImage({ src, className, fallbackClassName, size = 18 }) {
     return <CoverArtwork className={fallbackClassName} />;
 }
 
-export { MetadataTab };
+export { MetadataTab, MetadataSearchDialog };
 export default MetadataTab;

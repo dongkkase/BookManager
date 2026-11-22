@@ -7,8 +7,8 @@ import crypto from 'node:crypto';
 import https from 'node:https';
 import { createSelfSignedCertificate } from '../servers/sharingServers.js';
 import { ReadiveStore } from './store.js';
-import { fail, isAllowedReadivePeer, listReadiveInterfaces, transferSizePolicy } from './policy.js';
-import { openFrozenAsset, publicSnapshot, resolveFrozenAssetHash, scanReadivePaths, selectSnapshotEntries, summarizeEntries } from './manifest.js';
+import { fail, isAllowedReadivePeer, listReadiveInterfaces, transferSizePolicy, READIVE_LIMITS } from './policy.js';
+import { openFrozenAsset, readiveFileFormat, publicSnapshot, resolveFrozenAssetHash, scanReadivePaths, selectSnapshotEntries, summarizeEntries } from './manifest.js';
 import { exchangeReading, getImportedReadingState, readingRowSignature } from './reading.js';
 import { exchangeReadingActivity } from './readingActivity.js';
 import { ReadiveCatalogCache, readReadiveLibraryEntries, registeredReadiveLibraries, resolveReadiveLibraryPath, validateReadiveLibrary } from './catalog.js';
@@ -665,6 +665,46 @@ export class ReadiveService {
         const state = this.store.state;
         const device = /^[a-zA-Z0-9_-]{43}$/.test(token) ? state.devices.find(item => equalDigest(item.tokenHash, digest(token))) : null;
         if (!device) throw fail('unauthorized', 401);
+        if (method === 'POST' && pathname === `${PREFIX}/opds-bind`) {
+            if (!body || Object.keys(body).some(key => !['path', 'size', 'sha256'].includes(key))
+                || typeof body.path !== 'string' || body.path.length > 4096 || !path.isAbsolute(body.path)
+                || /[\x00-\x1f]/.test(body.path) || !Number.isSafeInteger(body.size) || body.size < 0
+                || typeof body.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(body.sha256)) throw fail('invalid_opds_binding');
+            if (this.opdsBindingBusy) throw fail('opds_binding_busy', 429);
+            this.opdsBindingBusy = true;
+            try {
+                const source = path.resolve(body.path);
+                const registered = registeredReadiveLibraries(state, this.getRegisteredLibraries()).find(library => {
+                    const relative = path.relative(library.path, source);
+                    return relative && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative);
+                });
+                if (!registered) throw fail('unshared_reading_item', 403);
+                const { scope } = await validateReadiveLibrary(state, this.getRegisteredLibraries(), registered.id);
+                this.validateLibraryPermission(scope);
+                const relative = path.relative(scope.rootPath, source).split(path.sep).join('/');
+                const { sourcePath, stat } = await resolveReadiveLibraryPath(scope, relative);
+                if (!stat.isFile() || stat.size !== body.size || !readiveFileFormat(sourcePath)) throw fail('source_changed', 409);
+                if (stat.size > READIVE_LIMITS.hardBytes) throw fail('transfer_hard_limit', 413);
+                const asset = { sourcePath, size: stat.size,
+                    identity: { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, ino: stat.ino, dev: stat.dev } };
+                const sha256 = await resolveFrozenAssetHash(asset, { signal, hashCache: this.assetHashCache });
+                if (sha256 !== body.sha256) throw fail('source_changed', 409);
+                const libraryDb = await this.getLibraryDb?.();
+                if (!libraryDb) throw fail('library_unavailable', 409);
+                const result = await this.store.transact(async next => {
+                    this.validateDevice(device);
+                    this.validateLibraryPermission(scope, next);
+                    await validateReadiveLibrary(next, this.getRegisteredLibraries(), registered.id, scope);
+                    const handle = await openFrozenAsset(asset);
+                    await handle.close();
+                    if (signal?.aborted) throw fail('opds_binding_cancelled', 409);
+                    next.pathContentHashes ||= {};
+                    const item = registerTransferItem(next, { ...asset, sha256 }, readiveFileFormat(sourcePath), device.id, libraryDb);
+                    return { serverId: next.serverId, itemId: item.itemId, sha256, size: stat.size };
+                });
+                return { json: result };
+            } finally { this.opdsBindingBusy = false; }
+        }
         if (method === 'GET' && pathname === `${PREFIX}/destination-requests`) return { json: { requests: this.destinations.list(device) } };
         const destinationMatch = pathname.match(/^\/readive\/v1\/destinations\/([a-f0-9-]+)$/);
         if (method === 'POST' && destinationMatch) return { json: this.destinations.respond(device, destinationMatch[1], body) };

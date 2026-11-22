@@ -66,6 +66,8 @@ const MemoToolsTab = lazyTab(() => import('./tabs/ToolsTab'));
 const MemoSharingTab = lazyTab(() => import('./tabs/SharingTab'));
 const MemoReleaseTab = lazyTab(() => import('./tabs/ReleaseTab'));
 
+const LANGUAGE_NAMES = { ko: '한국어', en: 'English', ja: '日本語' };
+
 function TabLoading({ t }) {
   return <div className="app-tab-loading">{t('msg_loading_list')}</div>;
 }
@@ -83,6 +85,7 @@ function App() {
   const [loadedTabs, setLoadedTabs] = useState(() => new Set(['folder']));
     const [readiveConnectionAttention, setReadiveConnectionAttention] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+    const [isLanguageSaving, setIsLanguageSaving] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState('basic');
     const [settingsInitialFocus, setSettingsInitialFocus] = useState(null);
   const [settingsNavigationRequest, setSettingsNavigationRequest] = useState(0);
@@ -99,7 +102,7 @@ function App() {
     const releaseUpdates = useReleaseUpdates();
     const updateInfo = useMemo(() => resolveUpdateInfo(appVersion, releaseUpdates.result), [appVersion, releaseUpdates.result]);
   const { config, saveConfig: setConfig, reloadConfig } = useConfig();
-  const { t, language, changeLanguage } = useI18n(config);
+    const { t, language, changeLanguage, supportedLanguages } = useI18n(config);
 
     React.useLayoutEffect(() => {
         applyMotionPreference(config?.motion_preference);
@@ -637,6 +640,18 @@ function App() {
     });
   }, [changeLanguage]);
 
+    const handleQuickLanguageChange = async nextLanguage => {
+        if (isLanguageSaving || nextLanguage === language || !supportedLanguages.includes(nextLanguage)) return;
+        setIsLanguageSaving(true);
+        try {
+            await setConfig({ language: nextLanguage, lang: nextLanguage });
+        } catch (error) {
+            showToast({ key: 'config_save_failed', values: { msg: error?.message || String(error) } });
+        } finally {
+            setIsLanguageSaving(false);
+        }
+    };
+
   const translatedTabs = TABS.map(tab => ({
     ...tab,
     label: t(tab.labelKey),
@@ -791,11 +806,28 @@ function App() {
             {t('btn_issue')}
           </button>
           <button className="top-btn" onClick={() => window.electronAPI?.openExternal?.(MANUAL_URL)}><FaIcon name="bookOpen" />{t('btn_manual')}</button>
+            <label
+                className="top-btn top-btn-icon top-language-switcher"
+                title={`${t('lang_lbl')} ${LANGUAGE_NAMES[language]}`}
+            >
+                <FaIcon name="language" />
+                <select
+                    aria-label={t('lang_lbl')}
+                    aria-busy={isLanguageSaving}
+                    value={language}
+                    disabled={!config || isAppLocked || showSettings || isLanguageSaving}
+                    onChange={event => handleQuickLanguageChange(event.target.value)}
+                >
+                    {supportedLanguages.map(value => (
+                        <option key={value} value={value} lang={value}>{LANGUAGE_NAMES[value]}</option>
+                    ))}
+                </select>
+            </label>
           <button
             className="top-btn top-btn-icon top-btn-settings"
             title={t('settings_btn')}
             aria-label={t('settings_btn')}
-            disabled={isAppLocked}
+            disabled={isAppLocked || isLanguageSaving}
             onClick={handleSettings}
           >
             <FaIcon name="gear" />
@@ -841,7 +873,7 @@ function App() {
         <div className={`app-tab-panel ${activeTab === 'metadata' && isWorking ? 'is-working' : ''}`} hidden={activeTab !== 'metadata'}>
           {loadedTabs.has('metadata') && (
             <React.Suspense fallback={<TabLoading t={t} />}>
-              <MemoMetadataTab config={config} t={t} showToast={showToast} />
+              <MemoMetadataTab config={config} saveConfig={setConfig} t={t} showToast={showToast} />
             </React.Suspense>
           )}
         </div>

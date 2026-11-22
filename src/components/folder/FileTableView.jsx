@@ -25,6 +25,15 @@ import {
 } from '../../viewerStatusState';
 
 const STATUS_COLUMN_KEYS = new Set(['viewer_reading_status', 'viewer_bookmark_status']);
+// 첫 상세 패널 전환에서도 화면 밖의 많은 셀을 다시 그리지 않도록 한다.
+const TABLE_VIRTUALIZE_THRESHOLD = 60;
+const TABLE_DATE_FORMATTER = new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+});
 const HEADER_ICON_BY_COLUMN = {
     viewer_reading_status: 'book',
     viewer_bookmark_status: 'bookmark',
@@ -114,7 +123,7 @@ const FileTableView = forwardRef(({
         [selectedFileSet, selectedFiles],
     );
     const tableRows = useMemo(() => buildVirtualTableRows(groupedData), [groupedData]);
-    const shouldVirtualize = shouldVirtualizeFolderItems(groupedData);
+    const shouldVirtualize = shouldVirtualizeFolderItems(groupedData, TABLE_VIRTUALIZE_THRESHOLD);
     const virtualRows = shouldVirtualize ? tableRows : [];
     const virtualBuffer = 12;
     const virtualVisibleCount = shouldVirtualize
@@ -187,22 +196,16 @@ const FileTableView = forwardRef(({
     return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   };
 
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '';
-    try {
-      const date = new Date(dateStr);
-      if (!Number.isFinite(date.getTime())) return '';
-      return date.toLocaleDateString('ko-KR', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch {
-      return dateStr;
-    }
-  };
+    const formatDate = (dateStr) => {
+        if (!dateStr) return '';
+        try {
+            const date = new Date(dateStr);
+            if (!Number.isFinite(date.getTime())) return '';
+            return TABLE_DATE_FORMATTER.format(date);
+        } catch {
+            return dateStr;
+        }
+    };
 
     const commitColumnLayout = (nextLayout, persist = false) => {
         onColumnLayoutChange?.(nextLayout, persist);

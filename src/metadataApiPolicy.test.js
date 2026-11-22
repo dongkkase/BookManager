@@ -227,8 +227,10 @@ test('통합검색 대상은 책 타입과 API 키 등록 여부를 함께 반�
 
 test('메타데이터 관리의 검색 API 선택은 환경 설정 기본값을 저장하지 않는다', () => {
   assert.match(metadataTabSource, /const selectApiSource = useCallback[\s\S]*?setApiSource\(nextSource\)/);
-  assert.doesNotMatch(metadataTabSource, /saveApiSourcePreference|metadataApiPreferenceKey|saveConfig/);
-  assert.doesNotMatch(appSource, /<MemoMetadataTab[^>]*saveConfig=/);
+    const selection = metadataTabSource.slice(metadataTabSource.indexOf('const selectApiSource = useCallback'), metadataTabSource.indexOf('const selectApiSource = useCallback') + 300);
+    assert.doesNotMatch(selection, /saveConfig|saveApiSourcePreference|metadataApiPreferenceKey/);
+    assert.match(appSource, /<MemoMetadataTab[^>]*saveConfig=/);
+    assert.match(metadataTabSource, /saveConfig\(\{ metadata_search_settings:/);
 });
 
 test('모든 메타데이터 검색 서비스 결과에 번역 버튼을 표시한다', () => {

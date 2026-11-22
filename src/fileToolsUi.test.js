@@ -46,7 +46,7 @@ test('텍본 정리기는 별도 청크와 워커로 지연 로딩된다', () =>
 
 test('폴더의 표지 편집은 설정과 여러 파일을 파일 도구의 지연 로딩 화면으로 전달한다', () => {
     assert.match(toolsTabSource, /lazy\(\(\) => import\('\.\.\/features\/fileTools\/coverEditor\/CoverEditorTool'\)\)/);
-    assert.match(folderSource, /resolveCoverEditorTargets\(menu\.file, selectedEntryObjects\)\.map\(file => file\.full_path \|\| file\.path\)/);
+    assert.match(folderSource, /resolveCoverEditorTargets\(menu\.file, menu\.source === 'detail' \? \[menu\.file\] : selectedEntryObjects\)\.map\(file => file\.full_path \|\| file\.path\)/);
     assert.match(folderSource, /detail: \{ tabId: 'tools', toolId: 'cover-editor', paths, source: 'folder', mode: 'append' \}/);
     assert.match(folderSource, /cover_editor_open_tool/);
     assert.doesNotMatch(folderSource, /CoverEditorDialog|setCoverEditorTarget|executeCoverEdit|saveCoverEditorPreferences/);

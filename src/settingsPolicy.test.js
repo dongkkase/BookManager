@@ -382,6 +382,20 @@ test('settings equality ignores object key order while retaining nested values a
     assert.equal(settingsConfigsEqual({ favorites: ['/A', '/B'] }, { favorites: ['/B', '/A'] }), false);
 });
 
+test('metadata search exclusions share normalized book-type settings and empty edits return to the saved state', () => {
+    const settings = normalizeSettingsConfig({ metadata_search_settings: {
+        comic: { excludedTitleTerms: ['특별 세트'], excludedResultTags: ['연재'] },
+        epub: { excludedTags: ['광고'] },
+        txt: { excludedTags: ['연재', '연재'] },
+    } });
+    assert.deepEqual(settings.metadata_search_settings.comic.excludedTitleTerms, ['특별 세트']);
+    assert.deepEqual(settings.metadata_search_settings.epub.excludedTags, ['광고']);
+    assert.deepEqual(settings.metadata_search_settings.txt.excludedTags, ['연재']);
+    assert.equal(settingsConfigsEqual({}, { metadata_search_settings: { comic: { excludedTags: [] } } }), true);
+    assert.equal(settingsConfigsEqual({}, settings), false);
+    assert.equal(settingsConfigsEqual(settings, normalizeSettingsConfig(settings)), true);
+});
+
 test('settings equality detects edits and becomes equal again when the edit is restored', () => {
     const baseline = normalizeSettingsConfig({ api_keys: { google: 'original' }, font_scale: 100 });
     const edited = { ...baseline, api_keys: { ...baseline.api_keys, google: 'changed' }, font_scale: 125 };

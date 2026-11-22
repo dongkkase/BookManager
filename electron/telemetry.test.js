@@ -1029,3 +1029,77 @@ test('stackless errors group by fixed feature and source and development errors 
     assert.equal(event.environment, 'development');
     assert.doesNotMatch(requests[0].body, /Private Book/);
 });
+
+test('ResizeObserver repeats retain the first report and hourly counts without consuming the real-error budget', async t => {
+    let now = 1_000_000;
+    const { telemetry, requests } = setup(t, { now: () => now }, { telemetry_error_reports: true });
+    const notification = { name: 'Error', stack: '' };
+    const context = { source: 'renderer', error_kind: 'uncaught-error', browser_error: 'resize-observer-loop' };
+    assert.equal(telemetry.reportTelemetryError(notification, context), true);
+    await telemetry.flushTelemetry();
+    for (let index = 0; index < 1000; index += 1) {
+        assert.equal(telemetry.reportTelemetryError(notification, context), false);
+    }
+    for (let index = 0; index < 19; index += 1) {
+        assert.equal(telemetry.reportTelemetryError(new TypeError('Real failure'), { source: 'renderer' }), true);
+    }
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 20);
+    now += 60 * 60_000;
+    assert.equal(telemetry.reportTelemetryError(notification, context), true);
+    await telemetry.flushTelemetry();
+    const first = JSON.parse(requests[0].body.split('\n')[2]);
+    const next = JSON.parse(requests.at(-1).body.split('\n')[2]);
+    assert.equal(first.tags.suppressed_repeats, 0);
+    assert.equal(next.tags.suppressed_repeats, 1000);
+    assert.deepEqual(next.fingerprint, first.fingerprint);
+    assert.equal(next.level, 'error');
+    assert.equal(requests.length, 21);
+});
+
+test('ResizeObserver reporting separates windows and resets when error consent changes', async t => {
+    let now = 1_000_000;
+    const { telemetry, requests } = setup(t, { now: () => now }, { telemetry_error_reports: true });
+    const notification = { name: 'Error', stack: '' };
+    const context = { source: 'renderer', error_kind: 'uncaught-error', browser_error: 'resize-observer-loop' };
+    assert.equal(telemetry.reportTelemetryError(notification, context), true);
+    assert.equal(telemetry.reportTelemetryError(notification, { ...context, source: 'viewer' }), true);
+    await telemetry.flushTelemetry();
+    assert.equal(telemetry.reportTelemetryError(notification, context), false);
+    now -= 1000;
+    assert.equal(telemetry.reportTelemetryError(notification, context), true);
+    await telemetry.flushTelemetry();
+    assert.equal(telemetry.reportTelemetryError(notification, context), false);
+    telemetry.updateTelemetryConsent({});
+    assert.equal(telemetry.reportTelemetryError(notification, context), false);
+    telemetry.updateTelemetryConsent({ telemetry_error_reports: true });
+    assert.equal(telemetry.reportTelemetryError(notification, context), true);
+    await telemetry.flushTelemetry();
+    assert.equal(requests.length, 4);
+    assert.equal(JSON.parse(requests.at(-1).body.split('\n')[2]).tags.suppressed_repeats, 0);
+});
+
+test('ResizeObserver coalescing never suppresses script failures, stacks, IPC errors or crashes', async t => {
+    const context = { source: 'renderer', error_kind: 'uncaught-error', browser_error: 'resize-observer-loop' };
+    const cases = [
+        [{ name: 'TypeError' }, context],
+        [{ name: 'Error', code: 'ENOENT' }, context],
+        [{ name: 'Error', stack: `Error\n    at ${path.join(APP_ROOT, 'src/telemetry.js')}:42:3` }, context],
+        [{ name: 'Error' }, { ...context, browser_error: 'script-error' }],
+        [{ name: 'Error' }, { ...context, browser_error: undefined }],
+        [{ name: 'Error' }, { ...context, error_kind: 'unhandled-rejection' }],
+        [{ name: 'Error' }, { ...context, ipc_channel: 'config:save' }],
+        [{ name: 'Error', reason: 'crashed' }, { ...context, source: 'render-process-gone' }],
+        [{ name: 'Error', reason: 'oom' }, { ...context, source: 'child-process-gone' }],
+    ];
+    for (const [error, tags] of cases) {
+        const { telemetry, requests } = setup(t, {}, { telemetry_error_reports: true });
+        assert.equal(telemetry.reportTelemetryError(error, tags), true);
+        assert.equal(telemetry.reportTelemetryError(error, tags), true);
+        await telemetry.flushTelemetry();
+        assert.equal(requests.length, 2);
+        for (const request of requests) {
+            assert.equal(Object.hasOwn(JSON.parse(request.body.split('\n')[2]).tags, 'suppressed_repeats'), false);
+        }
+    }
+});

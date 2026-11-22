@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import * as bookFields from './metadata/bookMetadataFields.js';
 import { resolveBookType } from './metadata/metadataTypes.js';
 import { metadataFromApiResult, metadataSearchQueryForItem } from './metadataApiPolicy.js';
+import { filterMetadataSearchResults, metadataSearchSettingType, metadataWithoutExcludedSearchTags, normalizeMetadataSearchSettings } from './metadataSearchSettings.js';
 import { applyBatchMetadataFields, applySeriesAutoMetadata, inferMetadataFromArchiveName, normalizeMetadataAutoNumber } from './metadataPolicy.js';
 import { isTxtMetadataItem, shouldAutoUseTxtSearchCover, txtMetadataCoverForSeries } from './txtMetadataPolicy.js';
 
@@ -76,6 +77,10 @@ function searchApplyContext(items, result) {
         txtMetadataCoverForSeries,
         metadataFromApiResult,
         metadataSearchQueryForItem,
+        filterMetadataSearchResults,
+        metadataSearchSettingType,
+        metadataWithoutExcludedSearchTags,
+        searchSettings: normalizeMetadataSearchSettings(),
         applyBatchMetadataFields,
         applySeriesAutoMetadata,
         inferMetadataFromArchiveName,

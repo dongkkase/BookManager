@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FaIcon } from '../FaIcon';
 import { SmoothCoverImage } from '../SmoothCoverImage';
+import { CoverEditorPanelSplit } from './CoverEditorPanelSplit';
 import { ResultLogDialog } from '../ResultLogDialog';
 import noImage from '../../images/noimage.png';
 import workingAnimation from '../../images/rainbow cat remix.gif';
 import { DRAG_DROP_IMAGES, selectRandomResource } from '../../resourcePolicy';
 import { createCoverEditorResultLog } from '../../coverEditorResultLog';
+import { coverEditorFolder, groupCoverEditorEntries } from '../../coverEditorGroups';
 import { isTextEntryTarget } from '../../interactionPolicy';
 import { coverEditorSearchTitle } from '../../coverEditorSearchTitle';
 import { coverEditorMetadataCoverUrl, coverEditorMetadataThumbnail, searchCoverEditorMetadata, upgradeCoverEditorMetadataThumbnails } from '../../coverEditorMetadataSearch';
@@ -59,7 +61,7 @@ function restoreCoverEditorOptions(preferences, info) {
 }
 
 export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnabled, preferences, onPreferencesChange, onExecute, onClose, showToast, t,
-    embedded = false, externalBusy = false, localImageRequest, onImageDropAvailabilityChange, onToggleFile, onToggleAll, onRemoveFile, onBusyChange, onReset }) {
+    embedded = false, externalBusy = false, localImageRequest, onImageDropAvailabilityChange, onToggleFile, onToggleAll, onRemoveFile, onRemoveGroup, onBusyChange, onReset }) {
     const reducedMotion = useReducedMotion();
     const targets = (files?.length ? files : [file]).filter(Boolean);
     const fileKey = JSON.stringify(targets.map(target => target.full_path || target.path));
@@ -71,7 +73,8 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     const [currentCover, setCurrentCover] = useState({ filePath: '', dataUrl: '' });
     const [coverLoading, setCoverLoading] = useState(false);
     const [coverError, setCoverError] = useState('');
-    const [images, setImages] = useState({ group: null, files: {} });
+    const [images, setImages] = useState({ group: null, groups: {}, files: {} });
+    const [collapsedGroups, setCollapsedGroups] = useState({});
     const imagesRef = useRef(images);
     const [imageEditTarget, setImageEditTarget] = useState(null);
     const imageEditTargetRef = useRef(null);
@@ -145,8 +148,11 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
         coverDataUrl: currentCover.filePath === selectedEntry.filePath ? currentCover.dataUrl : '',
     };
     const filePath = selectedEntry?.filePath || targets[0]?.full_path || targets[0]?.path || '';
+    const groups = React.useMemo(() => groupCoverEditorEntries(entries), [entries]);
+    const selectedGroup = coverEditorFolder(filePath);
     const individualCovers = options.coverScope === 'individual';
-    const imageForFile = path => individualCovers ? images.files[path] || null : images.group;
+    const imageForFile = path => individualCovers ? images.files[path] || null
+        : embedded ? images.groups[coverEditorFolder(path).key] || null : images.group;
     const image = imageForFile(filePath);
     imageRef.current = image;
     const bookType = ['comic', 'pdf', 'audio'].includes(info?.kind) ? info.kind : 'book';
@@ -188,7 +194,8 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
         setArrivalHighlight(0);
         setImageLoading(false);
         changeOptions({ coverScope });
-        imageRef.current = coverScope === 'individual' ? imagesRef.current.files[selectedPathRef.current] || null : imagesRef.current.group;
+        imageRef.current = coverScope === 'individual' ? imagesRef.current.files[selectedPathRef.current] || null
+            : embedded ? imagesRef.current.groups[coverEditorFolder(selectedPathRef.current).key] || null : imagesRef.current.group;
     };
 
     useEffect(() => attachCoverEditorSearchScroll(metadataResultsRef.current), [imageSource, metadataLoading, metadataSearch.results]);
@@ -263,37 +270,52 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     }, [imageEditTarget]);
 
     useEffect(() => {
-        onImageDropAvailabilityChange?.(!busy && !result && !helpOpen && (!individualCovers || Boolean(filePath)));
-    }, [busy, result, helpOpen, individualCovers, filePath, onImageDropAvailabilityChange]);
+        onImageDropAvailabilityChange?.(!busy && !result && !helpOpen && (!(individualCovers || embedded) || Boolean(filePath)));
+    }, [busy, result, helpOpen, individualCovers, embedded, filePath, onImageDropAvailabilityChange]);
 
     useEffect(() => {
         let cancelled = false;
+        const previousEntries = new Map(entries.map(entry => [entry.filePath, entry]));
+        const reuseInspection = embedded && !result
+            && inspectedFileKeyRef.current === JSON.stringify(entries.map(entry => entry.filePath))
+            && targets.length < entries.length
+            && targets.every(target => previousEntries.has(target.full_path || target.path));
         inspectedFileKeyRef.current = '';
         const load = async () => {
             setImageArrival(null);
             setArrivalHighlight(0);
-            const nextEntries = targets.map(target => ({
+            const nextEntries = targets.map(target => reuseInspection ? previousEntries.get(target.full_path || target.path) : ({
                 filePath: target.full_path || target.path,
                 name: target.name || target.full_path || target.path,
                 info: null,
                 error: '',
             }));
             const nextSelectedIndex = embedded ? Math.max(0, nextEntries.findIndex(entry => entry.filePath === selectedPathRef.current)) : 0;
-            const previousPath = selectedPathRef.current;
+            const previousPath = entries[selectedIndex]?.filePath || '';
+            const preserveSelection = reuseInspection && previousPath === nextEntries[nextSelectedIndex]?.filePath;
             setEntries(nextEntries);
             setSelectedIndex(nextSelectedIndex);
             selectedPathRef.current = nextEntries[nextSelectedIndex]?.filePath || '';
-            setCurrentCover({ filePath: '', dataUrl: '' });
+            if (!preserveSelection) {
+                coverRequestRef.current += 1;
+                archiveRequestRef.current += 1;
+                setCurrentCover({ filePath: '', dataUrl: '' });
+                setCoverLoading(false);
+                setCoverError('');
+            }
             if (!embedded) {
                 imageRef.current = null;
-                imagesRef.current = { group: null, files: {} };
+                imagesRef.current = { group: null, groups: {}, files: {} };
                 setImages(imagesRef.current);
                 setImageSource('local');
             } else {
                 const targetPaths = new Set(nextEntries.map(entry => entry.filePath));
-                updateImages({ ...imagesRef.current, files: Object.fromEntries(
-                    Object.entries(imagesRef.current.files).filter(([path]) => targetPaths.has(path)),
-                ) });
+                const targetGroups = new Set(nextEntries.map(entry => coverEditorFolder(entry.filePath).key));
+                updateImages({ ...imagesRef.current,
+                    files: Object.fromEntries(Object.entries(imagesRef.current.files).filter(([path]) => targetPaths.has(path))),
+                    groups: Object.fromEntries(Object.entries(imagesRef.current.groups).filter(([key]) => targetGroups.has(key))),
+                });
+                setCollapsedGroups(current => Object.fromEntries(Object.entries(current).filter(([key]) => targetGroups.has(key))));
             }
             if (!embedded || previousPath !== selectedPathRef.current) {
                 setSearchQuery(coverEditorSearchTitle(nextEntries[nextSelectedIndex]?.name));
@@ -302,9 +324,11 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                 metadataRequestRef.current += 1;
             }
             setImageLoading(false);
-            setArchiveImages({ entries: [], total: 0, offset: 0 });
-            setArchiveError('');
-            setArchiveLoading(false);
+            if (!preserveSelection) {
+                setArchiveImages({ entries: [], total: 0, offset: 0 });
+                setArchiveError('');
+                setArchiveLoading(false);
+            }
             setError('');
             setResult(null);
             setFileResults({});
@@ -314,9 +338,13 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
             setResultLog(null);
             setResultLogOpen(false);
             setFilenamePreviewPath('');
-            setCoverError('');
-            setInspectedCount(0);
-            setLoading(true);
+            setInspectedCount(reuseInspection ? nextEntries.length : 0);
+            setLoading(!reuseInspection);
+            if (reuseInspection) {
+                inspectedFileKeyRef.current = fileKey;
+                if (!preserveSelection && nextEntries[nextSelectedIndex]) void selectEntry(nextEntries[nextSelectedIndex], nextSelectedIndex);
+                return;
+            }
             if (!embedded) {
                 optionsRef.current = restoreCoverEditorOptions(preferences);
                 setOptions(optionsRef.current);
@@ -353,8 +381,6 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
         return () => {
             cancelled = true;
             imageRequestRef.current += 1;
-            archiveRequestRef.current += 1;
-            coverRequestRef.current += 1;
             if (!embedded && mountedRef.current) void window.electronAPI.releaseCoverEditorImages?.()?.catch?.(() => {});
         };
     }, [fileKey, embedded]);
@@ -427,18 +453,22 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     };
 
     const handleFileTableKeyDown = event => {
-        if (busy || !entries.length || event.defaultPrevented || isTextEntryTarget(event.target)) return;
-        const nextIndex = event.key === 'ArrowDown' ? Math.min(entries.length - 1, selectedIndex + 1)
-            : event.key === 'ArrowUp' ? Math.max(0, selectedIndex - 1)
-                : event.key === 'Home' ? 0 : event.key === 'End' ? entries.length - 1 : -1;
+        if (busy || !entries.length || event.defaultPrevented || isTextEntryTarget(event.target) || event.target?.closest?.('button')) return;
+        const visibleEntries = groups.filter(group => !collapsedGroups[group.key]).flatMap(group => group.entries);
+        if (!visibleEntries.length) return;
+        const currentIndex = visibleEntries.findIndex(({ index }) => index === selectedIndex);
+        const nextIndex = event.key === 'ArrowDown' ? Math.min(visibleEntries.length - 1, currentIndex + 1)
+            : event.key === 'ArrowUp' ? Math.max(0, currentIndex - 1)
+                : event.key === 'Home' ? 0 : event.key === 'End' ? visibleEntries.length - 1 : -1;
         if (nextIndex < 0) return;
         event.preventDefault();
-        if (nextIndex !== selectedIndex) void selectEntry(entries[nextIndex], nextIndex);
-        fileRowRefs.current.get(entries[nextIndex].filePath)?.scrollIntoView?.({ block: 'nearest' });
+        const { entry, index } = visibleEntries[nextIndex];
+        if (index !== selectedIndex) void selectEntry(entry, index);
+        fileRowRefs.current.get(entry.filePath)?.scrollIntoView?.({ block: 'nearest' });
     };
 
     const releaseImage = imagePath => {
-        if (imagePath && ![imagesRef.current.group, ...Object.values(imagesRef.current.files)].some(value => value?.imagePath === imagePath)) {
+        if (imagePath && ![imagesRef.current.group, ...Object.values(imagesRef.current.groups), ...Object.values(imagesRef.current.files)].some(value => value?.imagePath === imagePath)) {
             void window.electronAPI.releaseCoverEditorImages?.({ imagePath })?.catch?.(() => {});
         }
     };
@@ -447,14 +477,15 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
         const previousImages = imagesRef.current;
         imagesRef.current = nextImages;
         setImages(nextImages);
-        new Set([previousImages.group, ...Object.values(previousImages.files)].map(value => value?.imagePath)).forEach(releaseImage);
+        new Set([previousImages.group, ...Object.values(previousImages.groups), ...Object.values(previousImages.files)].map(value => value?.imagePath)).forEach(releaseImage);
     };
 
     const updateImage = value => {
         const current = imagesRef.current;
         updateImages(optionsRef.current.coverScope === 'individual'
             ? { ...current, files: { ...current.files, [selectedPathRef.current]: value } }
-            : { ...current, group: value });
+            : embedded ? { ...current, groups: { ...current.groups, [coverEditorFolder(selectedPathRef.current).key]: value } }
+                : { ...current, group: value });
         imageRef.current = value;
     };
 
@@ -502,7 +533,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     };
 
     const loadChosenImage = async (resolveImage, sourceDetails = {}) => {
-        if (savingRef.current || result || optionsRef.current.coverScope === 'individual' && !selectedPathRef.current) return;
+        if (savingRef.current || result || (embedded || optionsRef.current.coverScope === 'individual') && !selectedPathRef.current) return;
         const requestId = ++imageRequestRef.current;
         setImageArrival(null);
         setArrivalHighlight(0);
@@ -975,7 +1006,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     const footerStatus = saving
         ? progress ? t('cover_editor_batch_progress', [progress.completed, progress.total]) : t('cover_editor_saving')
         : hasRunResult ? loggedStats || result?.batch ? resultCounts : [t('cover_editor_saved'), warningCount > 0 && t('cover_editor_count_warning', [warningCount])].filter(Boolean).join(' · ')
-            : individualCovers && missingCoverCount > 0 ? t('cover_editor_missing_covers', [missingCoverCount])
+            : (individualCovers || embedded) && missingCoverCount > 0 ? t('cover_editor_missing_covers', [missingCoverCount])
                 : canBackup && backup ? t('cover_editor_backup_hint') : '';
     const statusTone = saving ? 'is-working' : hasRunResult ? footerFailureCount > 0 ? 'has-error'
         : warningCount > 0 || footerCancelledCount > 0 ? 'has-warning' : 'is-success' : '';
@@ -1020,65 +1051,104 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                     <th scope="col" style={{ width: '88px' }}>{t('cover_editor_filename_preview')}</th>
                     <th scope="col" style={{ width: '8%' }}>{t('cover_editor_tool_remove')}</th>
                 </tr></thead>
-                <tbody>{entries.map((entry, index) => {
-                    const outcome = fileResults[entry.filePath];
-                    const status = entry.error ? 'cover_editor_batch_inspect_failed'
-                        : outcome?.cancelled ? 'cover_editor_batch_cancelled'
-                            : outcome ? outcome.success ? 'cover_editor_status_saved' : 'cover_editor_status_failed'
-                                : entry.info ? individualCovers ? imageForFile(entry.filePath) ? 'cover_editor_cover_assigned' : 'cover_editor_cover_required'
-                                    : 'cover_editor_batch_ready' : 'cover_editor_batch_pending';
-                    const name = entry.info?.name || entry.name;
-                    const statusText = [t(status), hasResultWarning(outcome) && t('cover_editor_status_warning')].filter(Boolean).join(' · ');
-                    return <tr key={entry.filePath} data-cover-file={entry.filePath}
-                        ref={node => { if (node) fileRowRefs.current.set(entry.filePath, node); else fileRowRefs.current.delete(entry.filePath); }}
-                        className={selectedIndex === index ? 'selected' : ''} aria-selected={selectedIndex === index}
-                        onMouseDown={event => {
-                            if (event.button !== 0 || event.target.closest('input, button, textarea, select, a')) return;
-                            fileTableRef.current?.focus({ preventScroll: true });
-                            if (selectedIndex !== index) void selectEntry(entry, index);
-                        }}
-                        onClick={event => {
-                            if (event.target.closest('input, button, textarea, select, a')) return;
-                            fileTableRef.current?.focus({ preventScroll: true });
-                        }}>
-                        <td><div className="renamer-file-cell">
-                            <input type="checkbox" className="cover-editor-file-check" checked={checkedPaths.has(entry.filePath)}
-                                disabled={busy || !onToggleFile} aria-label={name}
-                                onClick={event => event.stopPropagation()}
-                                onChange={event => { event.stopPropagation(); onToggleFile?.(entry.filePath); }} />
-                            <span className="renamer-file-name" title={entry.filePath}>{name}</span>
-                        </div></td>
-                        <td className="renamer-cell-center">{entry.info?.kind === 'comic' && Number.isFinite(entry.info.pageCount) ? entry.info.pageCount : '—'}</td>
-                        <td className="renamer-cell-center">{Number.isFinite(entry.info?.size) ? `${(entry.info.size / (1024 * 1024)).toFixed(1)} MB` : '—'}</td>
-                        <td className="renamer-cell-center" title={statusText}>{statusText}</td>
-                        <td className="renamer-cell-center">
-                            <button type="button" className="cover-editor-filename-preview-button" aria-haspopup="dialog"
-                                aria-label={t('cover_editor_filename_preview_file', [name])}
-                                title={t(!entry.info?.canRenumber ? 'cover_editor_filename_preview_unavailable'
-                                    : !renumber ? 'cover_editor_filename_preview_disabled' : 'cover_editor_filename_preview_title')}
-                                disabled={busy || Boolean(result) || !renumber || !entry.info?.canRenumber || !entry.info?.pages?.length}
-                                onClick={event => {
-                                    event.stopPropagation();
-                                    if (busy || result || !renumber || !entry.info?.canRenumber || !entry.info?.pages?.length) return;
-                                    filenameButtonRef.current = event.currentTarget;
-                                    setFilenamePreviewPath(entry.filePath);
-                                }}>{t('cover_editor_filename_preview')}</button>
+                {groups.map(group => <tbody key={group.key} data-cover-group={group.path}>
+                    <tr className={`cover-editor-group-row${selectedGroup.key === group.key ? ' is-active' : ''}`}>
+                        <td colSpan={6}>
+                            <div className="cover-editor-group-heading">
+                                <button type="button" className="cover-editor-group-toggle" disabled={busy}
+                                    aria-label={t(collapsedGroups[group.key] ? 'cover_editor_group_expand' : 'cover_editor_group_collapse', [group.path])}
+                                    aria-expanded={!collapsedGroups[group.key]}
+                                    onClick={() => setCollapsedGroups(current => ({ ...current, [group.key]: !current[group.key] }))}>
+                                    <FaIcon name={collapsedGroups[group.key] ? 'angleRight' : 'angleDown'} aria-hidden="true" />
+                                </button>
+                                <button type="button" className="cover-editor-group-select" disabled={busy}
+                                    title={group.path} aria-pressed={selectedGroup.key === group.key}
+                                    onClick={() => {
+                                        if (selectedGroup.key !== group.key) void selectEntry(group.entries[0].entry, group.entries[0].index);
+                                    }}
+                                    onDoubleClick={() => {
+                                        if (!busy) setCollapsedGroups(current => ({ ...current, [group.key]: !current[group.key] }));
+                                    }}>
+                                    <FaIcon name="folderOpen" aria-hidden="true" />
+                                    <span className="cover-editor-group-name">{group.name || t('cover_editor_tool_files')}</span>
+                                    <span className="cover-editor-group-path">{group.path}</span>
+                                </button>
+                                <span className="cover-editor-group-count">{t('cover_editor_group_count', [group.entries.filter(({ entry }) => checkedPaths.has(entry.filePath)).length, group.entries.length])}</span>
+                                {!individualCovers && <span className="cover-editor-group-status">{t(images.groups[group.key] ? 'cover_editor_cover_assigned' : 'cover_editor_cover_required')}</span>}
+                                <button type="button" className="cover-editor-group-remove" disabled={busy || !onRemoveGroup}
+                                    title={t('cover_editor_group_remove', [group.name])} aria-label={t('cover_editor_group_remove', [group.path])}
+                                    onClick={event => {
+                                        event.stopPropagation();
+                                        if (busy || !onRemoveGroup) return;
+                                        fileTableRef.current?.focus({ preventScroll: true });
+                                        if (selectedGroup.key === group.key) {
+                                            selectedPathRef.current = groups.find(item => item.key !== group.key)?.entries[0].entry.filePath || '';
+                                        }
+                                        onRemoveGroup(group.key);
+                                    }}><FaIcon name="trash" size={11} aria-hidden="true" /></button>
+                            </div>
                         </td>
-                        <td className="renamer-cell-center">
-                            <button type="button" className="renamer-archive-delete-btn" title={t('cover_editor_tool_remove_hint')}
-                                aria-label={t('cover_editor_tool_remove_file', [name])} disabled={busy || !onRemoveFile}
-                                onClick={event => {
-                                    event.stopPropagation();
-                                    if (busy || !onRemoveFile) return;
-                                    fileTableRef.current?.focus({ preventScroll: true });
-                                    if (selectedPathRef.current === entry.filePath) {
-                                        selectedPathRef.current = (entries[index + 1] || entries[index - 1])?.filePath || '';
-                                    }
-                                    onRemoveFile(entry.filePath);
-                                }}><FaIcon name="trash" size={11} aria-hidden="true" /></button>
-                        </td>
-                    </tr>;
-                })}</tbody>
+                    </tr>
+                    {!collapsedGroups[group.key] && group.entries.map(({ entry, index }) => {
+                        const outcome = fileResults[entry.filePath];
+                        const status = entry.error ? 'cover_editor_batch_inspect_failed'
+                            : outcome?.cancelled ? 'cover_editor_batch_cancelled'
+                                : outcome ? outcome.success ? 'cover_editor_status_saved' : 'cover_editor_status_failed'
+                                    : entry.info ? imageForFile(entry.filePath) ? 'cover_editor_cover_assigned' : 'cover_editor_cover_required'
+                                        : 'cover_editor_batch_pending';
+                        const name = entry.info?.name || entry.name;
+                        const statusText = [t(status), hasResultWarning(outcome) && t('cover_editor_status_warning')].filter(Boolean).join(' · ');
+                        return <tr key={entry.filePath} data-cover-file={entry.filePath}
+                            ref={node => { if (node) fileRowRefs.current.set(entry.filePath, node); else fileRowRefs.current.delete(entry.filePath); }}
+                            className={selectedIndex === index ? 'selected' : ''} aria-selected={selectedIndex === index}
+                            onMouseDown={event => {
+                                if (event.button !== 0 || event.target.closest('input, button, textarea, select, a')) return;
+                                fileTableRef.current?.focus({ preventScroll: true });
+                                if (selectedIndex !== index) void selectEntry(entry, index);
+                            }}
+                            onClick={event => {
+                                if (event.target.closest('input, button, textarea, select, a')) return;
+                                fileTableRef.current?.focus({ preventScroll: true });
+                            }}>
+                            <td><div className="renamer-file-cell">
+                                <input type="checkbox" className="cover-editor-file-check" checked={checkedPaths.has(entry.filePath)}
+                                    disabled={busy || !onToggleFile} aria-label={name}
+                                    onClick={event => event.stopPropagation()}
+                                    onChange={event => { event.stopPropagation(); onToggleFile?.(entry.filePath); }} />
+                                <span className="renamer-file-name" title={entry.filePath}>{name}</span>
+                            </div></td>
+                            <td className="renamer-cell-center">{entry.info?.kind === 'comic' && Number.isFinite(entry.info.pageCount) ? entry.info.pageCount : '—'}</td>
+                            <td className="renamer-cell-center">{Number.isFinite(entry.info?.size) ? `${(entry.info.size / (1024 * 1024)).toFixed(1)} MB` : '—'}</td>
+                            <td className="renamer-cell-center" title={statusText}>{statusText}</td>
+                            <td className="renamer-cell-center">
+                                <button type="button" className="cover-editor-filename-preview-button" aria-haspopup="dialog"
+                                    aria-label={t('cover_editor_filename_preview_file', [name])}
+                                    title={t(!entry.info?.canRenumber ? 'cover_editor_filename_preview_unavailable'
+                                        : !renumber ? 'cover_editor_filename_preview_disabled' : 'cover_editor_filename_preview_title')}
+                                    disabled={busy || Boolean(result) || !renumber || !entry.info?.canRenumber || !entry.info?.pages?.length}
+                                    onClick={event => {
+                                        event.stopPropagation();
+                                        if (busy || result || !renumber || !entry.info?.canRenumber || !entry.info?.pages?.length) return;
+                                        filenameButtonRef.current = event.currentTarget;
+                                        setFilenamePreviewPath(entry.filePath);
+                                    }}>{t('cover_editor_filename_preview')}</button>
+                            </td>
+                            <td className="renamer-cell-center">
+                                <button type="button" className="renamer-archive-delete-btn" title={t('cover_editor_tool_remove_hint')}
+                                    aria-label={t('cover_editor_tool_remove_file', [name])} disabled={busy || !onRemoveFile}
+                                    onClick={event => {
+                                        event.stopPropagation();
+                                        if (busy || !onRemoveFile) return;
+                                        fileTableRef.current?.focus({ preventScroll: true });
+                                        if (selectedPathRef.current === entry.filePath) {
+                                            selectedPathRef.current = (entries[index + 1] || entries[index - 1])?.filePath || '';
+                                        }
+                                        onRemoveFile(entry.filePath);
+                                    }}><FaIcon name="trash" size={11} aria-hidden="true" /></button>
+                            </td>
+                        </tr>;
+                    })}
+                </tbody>)}
             </table>
         </div>
     );
@@ -1349,17 +1419,20 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                 <div className="cover-editor-body">
                     {embedded ? <div className="cover-editor-tool-workspace">
                         {comparisonPanel}
-                        <div className="cover-editor-tool-main">
+                        <CoverEditorPanelSplit disabled={busy} controlsId={`${titleId}-files`} t={t}>
                             <section ref={batchRef} id={`${titleId}-files`} className="cover-editor-tool-files" aria-label={t('cover_editor_tool_files')}>
                                 {optionsPanel}
-                                <p id={`${titleId}-scope-hint`} className="cover-editor-scope-hint">{t(individualCovers ? 'cover_editor_scope_individual_hint' : 'cover_editor_scope_group_hint')}</p>
+                                <p id={`${titleId}-scope-hint`} className="cover-editor-scope-hint">
+                                    {t(individualCovers ? 'cover_editor_scope_individual_hint' : 'cover_editor_scope_folder_hint')}
+                                    {!individualCovers && filePath && <span className="cover-editor-active-group" title={selectedGroup.path}>{t('cover_editor_active_group', [selectedGroup.name])}</span>}
+                                </p>
                                 {embeddedFileList}
                                 {loading && <p className="cover-editor-note" role="status">{t('cover_editor_batch_inspecting', [inspectedCount, targets.length])}</p>}
                                 {inspectionFailureCount > 0 && <p className="cover-editor-note">{t('cover_editor_batch_inspect_hint')}</p>}
                                 <div className="renamer-table-count">{t('cover_editor_tool_total_files', { count: entries.length })}</div>
                             </section>
                             {entries.length > 0 && sourcePanel}
-                        </div>
+                        </CoverEditorPanelSplit>
                     </div> : <>
                     {isBatch && <details ref={batchRef} id={`${titleId}-files`} className="cover-editor-batch" open={batchOpen}
                         onToggle={event => setBatchOpen(event.currentTarget.open)}>

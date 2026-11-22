@@ -2415,22 +2415,17 @@ body,
   box-sizing: border-box;
   display: flex;
   justify-content: center;
-  align-items: stretch;
+    align-items: center;
   gap: 10px;
   padding: 14px;
   overflow: hidden;
 }
 
 .viewer-reader-stage > .viewer-page-transition-layer {
-  align-items: stretch;
+    align-items: center;
   justify-content: center;
   gap: 10px;
   padding: var(--viewer-reader-stage-padding);
-}
-
-.viewer-reader-stage.is-spread .viewer-page-transition-layer .viewer-text-page {
-  flex: 0 1 680px;
-  max-width: 680px;
 }
 
 .viewer-reader-stage.is-spread.has-spread-pair {
@@ -2438,22 +2433,14 @@ body,
 }
 
 .viewer-reader-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-spread-pair {
-  height: 100%;
-  align-items: stretch;
+    width: max-content;
+    height: auto;
+    align-items: center;
 }
 
 .viewer-reader-stage.is-spread .viewer-page-transition-layer.has-spread-pair .viewer-text-page {
-  flex: 0 1 680px;
   margin-left: 0;
   margin-right: 0;
-}
-
-.viewer-reader-stage.is-width .viewer-page-transition-layer .viewer-text-page {
-  max-width: none;
-}
-
-.viewer-reader-stage.is-width.is-spread .viewer-page-transition-layer .viewer-text-page {
-  flex-basis: 50%;
 }
 
 .viewer-reader-stage.effect-page {
@@ -3819,11 +3806,57 @@ body,
     opacity: 0.5;
 }
 
-.viewer-epub-style-settings .viewer-setting-description {
+.viewer-epub-style-settings .viewer-setting-description,
+.viewer-paper-size-setting .viewer-setting-description {
     margin: 8px 0 0;
     color: #aaa;
     font-size: 11px;
     line-height: 1.6;
+}
+
+.viewer-paper-size-setting .viewer-dropdown-button {
+    height: 40px;
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+}
+
+.viewer-paper-size-setting .viewer-dropdown-option {
+    min-height: 54px;
+    grid-template-columns: 48px minmax(0, 1fr) 16px;
+    padding: 3px 6px;
+}
+
+.viewer-paper-size-setting .viewer-dropdown-option > span:not(.viewer-paper-preview) {
+    white-space: normal;
+    line-height: 1.4;
+}
+
+.viewer-paper-preview {
+    display: block;
+    width: 48px;
+    height: 48px;
+    color: #beb7a5;
+}
+
+.viewer-paper-preview-sheet {
+    fill: #f2ead9;
+    stroke: currentColor;
+    stroke-width: 1;
+}
+
+.viewer-paper-preview.is-screen {
+    display: grid;
+    place-items: center;
+    color: #b8c5d1;
+}
+
+.viewer-paper-size-setting .viewer-dropdown-button .viewer-paper-preview {
+    width: 32px;
+    height: 32px;
+}
+
+.viewer-paper-size-setting .viewer-dropdown-option.is-selected .viewer-paper-preview-sheet {
+    fill: #d3e9fa;
+    stroke: #7fc3f1;
 }
 
 .viewer-text-page.is-original-reader {

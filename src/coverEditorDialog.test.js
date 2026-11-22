@@ -8,6 +8,7 @@ import { coverEditorMetadataCoverUrl, coverEditorMetadataThumbnail, searchCoverE
 import { metadataSearchResultKey } from './metadataSearch.js';
 import * as metadataApiPolicy from './metadataApiPolicy.js';
 import { createCoverEditorResultLog } from './coverEditorResultLog.js';
+import * as coverEditorGroups from './coverEditorGroups.js';
 import { isTextEntryTarget } from './interactionPolicy.js';
 import { normalizeStatusState } from './statusState.js';
 import { resolveEffectiveWorkingTab, shouldUseLibraryScanSlide } from './appLockState.js';
@@ -148,6 +149,8 @@ async function fixture(options = {}) {
     } };
     const mocks = { react, '../FaIcon': { FaIcon: 'Icon' }, '../SmoothCoverImage': { SmoothCoverImage: 'img' }, '../ResultLogDialog': { ResultLogDialog: 'ResultLogDialog' }, '../../coverEditorResultLog': { createCoverEditorResultLog }, '../../interactionPolicy': { isTextEntryTarget }, '../../images/noimage.png': 'noimage.png', '../../images/rainbow cat remix.gif': 'rainbow-cat.gif', '../../resourcePolicy': { DRAG_DROP_IMAGES: ['draganddrop.png'], selectRandomResource: resources => resources[0] }, '../../coverEditorSearchTitle': { coverEditorSearchTitle }, '../../coverEditorMetadataSearch': { coverEditorMetadataCoverUrl, coverEditorMetadataThumbnail, searchCoverEditorMetadata }, '../../metadataSearch': { metadataSearchResultKey }, '../../coverEditorSearchScroll': { attachCoverEditorSearchScroll: () => undefined }, '../../styles/RenamerTab.css': {}, '../../styles/CoverEditorDialog.css': {} };
     const module = { exports: {} };
+    mocks['./CoverEditorPanelSplit'] = { CoverEditorPanelSplit: 'CoverEditorPanelSplit' };
+    mocks['../../coverEditorGroups'] = coverEditorGroups;
     mocks['../../coverEditorMetadataSearch'].upgradeCoverEditorMetadataThumbnails = (results, cacheCover, runtime) => (
         upgradeCoverEditorMetadataThumbnails(results, cacheCover, { ...runtime, ...(options.readImageSize ? { readImageSize: options.readImageSize } : {}) })
     );
@@ -172,6 +175,7 @@ async function fixture(options = {}) {
         onToggleFile: filePath => { calls.toggledFiles.push(filePath); },
         onToggleAll: () => { calls.toggledAll += 1; },
         onRemoveFile: filePath => { calls.removedFiles.push(filePath); },
+        onRemoveGroup: groupKey => { (calls.removedGroups ??= []).push(groupKey); },
         onBusyChange: busy => { calls.busy.push(busy); },
         onImageDropAvailabilityChange: available => { calls.imageDropAvailable.push(available); },
         onReset: () => { calls.reset += 1; },
@@ -813,6 +817,206 @@ test('batch requests share the selected image while preserving each file identit
         assert.equal(typeof value.calls.executeOptions[0].onProgress, 'function');
         assert.equal(typeof value.calls.executeOptions[0].shouldCancel, 'function');
         assert.equal(value.calls.executeOptions[0].shouldCancel(), false);
+    } finally { value.close(); }
+});
+
+test('folder groups keep distinct covers and save checked files even when their group is collapsed', async () => {
+    let imagePath = '/images/A.png';
+    const files = ['A/one.cbz', 'B/two.cbz', 'A/three.cbz'].map(name => ({ ...selectedFile(name), name: name.split('/').at(-1) }));
+    const value = await fixture({ embedded: true, files, select: () => imagePath,
+        inspect: path => fileInfo(path.split('/').at(-1), { filePath: path }) });
+    const group = path => value.all(node => node.props['data-cover-group'] === `/library/${path}`)[0];
+    const control = (path, className) => nodes(group(path)).find(node => node.props.className === className);
+    try {
+        assert.deepEqual(value.all(node => node.props['data-cover-group']).map(node => node.props['data-cover-group']), ['/library/A', '/library/B']);
+        assert.deepEqual(nodes(group('A')).filter(node => node.props['data-cover-file']).map(node => node.props['data-cover-file']), ['/library/A/one.cbz', '/library/A/three.cbz']);
+        await value.browse();
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, true);
+        control('B', 'cover-editor-group-select').props.onClick();
+        await value.settle();
+        assert.equal(value.newImage(), undefined);
+        imagePath = '/images/B.png';
+        await value.browse();
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, false);
+        control('A', 'cover-editor-group-select').props.onClick();
+        await value.settle();
+        assert.equal(value.newImage().props.src, preview('/images/A.png').dataUrl);
+        await changeCoverScope(value, 'individual');
+        assert.equal(value.newImage(), undefined);
+        await changeCoverScope(value, 'group');
+        assert.equal(value.newImage().props.src, preview('/images/A.png').dataUrl);
+        control('A', 'cover-editor-group-toggle').props.onClick();
+        await value.settle();
+        assert.equal(control('A', 'cover-editor-group-toggle').props['aria-expanded'], false);
+        assert.equal(fileButton(value, 'one.cbz'), undefined);
+        assert.deepEqual(value.calls.toggledFiles, []);
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, false);
+        await value.button('cover_editor_batch_save').props.onClick();
+        assert.deepEqual(value.calls.execute[0].map(request => [request.filePath, request.imagePath]), [
+            ['/library/A/one.cbz', '/images/A.png'], ['/library/B/two.cbz', '/images/B.png'], ['/library/A/three.cbz', '/images/A.png'],
+        ]);
+    } finally { value.close(); }
+});
+
+test('collapsed folder groups are skipped by keyboard navigation and keep their state when files are added', async () => {
+    const files = ['A/one.cbz', 'B/two.cbz', 'A/three.cbz'].map(name => ({ ...selectedFile(name), name: name.split('/').at(-1) }));
+    const value = await fixture({ embedded: true, files, inspect: path => fileInfo(path.split('/').at(-1), { filePath: path }) });
+    const toggle = () => value.all(node => node.props['data-cover-group'] === '/library/A').flatMap(nodes).find(node => node.props.className === 'cover-editor-group-toggle');
+    const navigate = async key => {
+        value.all(node => node.props.className === 'renamer-table-wrapper cover-editor-file-table')[0].props.onKeyDown(event({ key, target: { tagName: 'DIV' } }));
+        await value.settle();
+    };
+    try {
+        await navigate('ArrowDown');
+        assert.equal(fileButton(value, 'three.cbz').props['aria-selected'], true);
+        toggle().props.onClick();
+        await value.settle();
+        await navigate('Home');
+        assert.equal(fileButton(value, 'two.cbz').props['aria-selected'], true);
+        value.updateProps({ files: [...files, selectedFile('A/four.cbz')] });
+        await value.settle();
+        assert.equal(toggle().props['aria-expanded'], false);
+        assert.equal(fileButton(value, 'four.cbz'), undefined);
+        toggle().props.onClick();
+        await value.settle();
+        assert.ok(fileButton(value, 'four.cbz'));
+        assert.deepEqual(value.calls.toggledFiles, []);
+    } finally { value.close(); }
+});
+
+test('switching folder groups discards a late image and removing a group releases only its cover', async () => {
+    let imagePath = '/images/A.png';
+    let pending;
+    const files = ['A/one.cbz', 'B/two.cbz'].map(name => ({ ...selectedFile(name), name: name.split('/').at(-1) }));
+    const value = await fixture({ embedded: true, files, select: () => imagePath,
+        preview: path => pending ? pending.promise : preview(path),
+        inspect: path => fileInfo(path.split('/').at(-1), { filePath: path }) });
+    try {
+        await value.browse();
+        await selectEmbeddedFile(value, 'two.cbz');
+        imagePath = '/images/B.png';
+        await value.browse();
+        pending = deferred();
+        const choosing = value.button('cover_editor_local_browse').props.onClick();
+        await value.settle();
+        await selectEmbeddedFile(value, 'one.cbz');
+        pending.resolve(preview('/images/late-B.png'));
+        await choosing;
+        await value.settle();
+        assert.equal(value.newImage().props.src, preview('/images/A.png').dataUrl);
+        assert.deepEqual(value.calls.released, [{ imagePath: '/images/late-B.png' }]);
+        value.updateProps({ files: [files[1]] });
+        await value.settle();
+        assert.equal(value.newImage().props.src, preview('/images/B.png').dataUrl);
+        assert.deepEqual(value.calls.released, [{ imagePath: '/images/late-B.png' }, { imagePath: '/images/A.png' }]);
+    } finally { value.close(); }
+});
+
+test('removing a collapsed group selects a remaining file and releases only the removed group cover', async () => {
+    let imagePath = '/images/A.png';
+    let version = 'original-version';
+    const files = ['A/one.cbz', 'B/two.cbz', 'B/three.cbz'].map(name => ({ ...selectedFile(name), name: name.split('/').at(-1) }));
+    const value = await fixture({ embedded: true, files, select: () => imagePath,
+        inspect: path => fileInfo(path.split('/').at(-1), { filePath: path, version }), execute: saveBatchSuccessfully });
+    const control = className => value.all(node => node.props['data-cover-group'] === '/library/A').flatMap(nodes)
+        .find(node => node.props.className === className);
+    try {
+        await value.browse();
+        await selectEmbeddedFile(value, 'two.cbz');
+        imagePath = '/images/B.png';
+        await value.browse();
+        await selectEmbeddedFile(value, 'one.cbz');
+        control('cover-editor-group-toggle').props.onClick();
+        await value.settle();
+        assert.equal(fileButton(value, 'one.cbz'), undefined);
+        value.updateProps({ externalBusy: true });
+        await value.settle();
+        assert.equal(control('cover-editor-group-remove').props.disabled, true);
+        control('cover-editor-group-remove').props.onClick(event());
+        assert.deepEqual(value.calls.removedGroups || [], []);
+        value.updateProps({ externalBusy: false });
+        await value.settle();
+        const inspections = [...value.calls.inspect];
+        const statusCount = value.statusStates.length;
+        version = 'changed-version';
+        const click = event();
+        control('cover-editor-group-remove').props.onClick(click);
+        assert.equal(click.propagationStopped, true);
+        assert.deepEqual(value.calls.removedGroups, ['/library/A']);
+        value.updateProps({ files: files.slice(1) });
+        await value.settle();
+        assert.deepEqual(value.calls.inspect, [...inspections, '/library/B/two.cbz']);
+        assert.equal(value.statusStates.slice(statusCount).some(status => status.phase === 'analyzing'), false);
+        assert.equal(fileButton(value, 'two.cbz').props['aria-selected'], true);
+        assert.equal(value.currentImage().props.src, fileInfo('two.cbz').coverDataUrl);
+        assert.equal(value.newImage().props.src, preview('/images/B.png').dataUrl);
+        assert.deepEqual(value.calls.released, [{ imagePath: '/images/A.png' }]);
+        assert.deepEqual(value.calls.execute, []);
+        await value.button('cover_editor_batch_save').props.onClick();
+        await value.settle();
+        assert.deepEqual(value.calls.execute[0].map(request => [request.filePath, request.version]), [
+            ['/library/B/two.cbz', 'original-version'], ['/library/B/three.cbz', 'original-version'],
+        ]);
+    } finally { value.close(); }
+});
+
+test('removing another group retains inspections, failed rows, selected covers and collapsed groups without reading files', async () => {
+    const files = ['A/one.cbz', 'A/two.cbz', 'B/three.cbz', 'C/broken.cbz']
+        .map(name => ({ ...selectedFile(name), name: name.split('/').at(-1), checked: !name.startsWith('C/') }));
+    const value = await fixture({ embedded: true, files,
+        inspect: path => path.endsWith('broken.cbz') ? { error: 'Unreadable archive' }
+            : fileInfo(path.split('/').at(-1), { filePath: path }) });
+    const control = (group, className) => value.all(node => node.props['data-cover-group'] === `/library/${group}`).flatMap(nodes)
+        .find(node => node.props.className === className);
+    try {
+        await selectEmbeddedFile(value, 'three.cbz');
+        await value.browse();
+        control('C', 'cover-editor-group-toggle').props.onClick();
+        await value.settle();
+        const inspections = [...value.calls.inspect];
+        const statusCount = value.statusStates.length;
+        control('A', 'cover-editor-group-remove').props.onClick(event());
+        value.updateProps({ files: files.slice(2) });
+        await value.settle();
+        assert.deepEqual(value.calls.inspect, inspections);
+        assert.equal(value.statusStates.slice(statusCount).some(status => status.phase === 'analyzing'), false);
+        assert.equal(fileButton(value, 'three.cbz').props['aria-selected'], true);
+        assert.equal(value.currentImage().props.src, fileInfo('three.cbz').coverDataUrl);
+        assert.equal(value.newImage().props.src, preview('/images/new.png').dataUrl);
+        assert.equal(control('C', 'cover-editor-group-toggle').props['aria-expanded'], false);
+        control('C', 'cover-editor-group-toggle').props.onClick();
+        await value.settle();
+        assert.ok(textContent(fileButton(value, 'broken.cbz')).includes('cover_editor_batch_inspect_failed'));
+        assert.equal(nodes(fileButton(value, 'broken.cbz')).find(node => node.type === 'input').props.checked, false);
+        assert.equal(value.button('cover_editor_save').props.disabled, false);
+    } finally { value.close(); }
+});
+
+test('removing another group keeps pending selected-cover and archive-thumbnail requests alive', async () => {
+    const cover = deferred();
+    const thumbnails = deferred();
+    let refresh = false;
+    const files = ['A/one.cbz', 'B/two.cbz'].map(name => ({ ...selectedFile(name), name: name.split('/').at(-1) }));
+    const value = await fixture({ embedded: true, files,
+        inspect: path => refresh ? cover.promise : fileInfo(path.split('/').at(-1), { filePath: path, canSelectArchiveImage: true }),
+        archiveThumbnails: () => thumbnails.promise });
+    try {
+        refresh = true;
+        fileButton(value, 'two.cbz').props.onMouseDown(event({ button: 0, target: { closest: () => null } }));
+        await value.settle();
+        value.button('cover_editor_source_archive').props.onClick();
+        await value.settle();
+        const inspections = [...value.calls.inspect];
+        value.updateProps({ files: [files[1]] });
+        await value.settle();
+        assert.deepEqual(value.calls.inspect, inspections);
+        cover.resolve(fileInfo('two.cbz'));
+        thumbnails.resolve({ entries: [{ name: 'pages/02.png', thumbnailDataUrl: 'data:image/png;base64,archive-thumbnail' }] });
+        await value.settle();
+        assert.equal(value.currentImage().props.src, fileInfo('two.cbz').coverDataUrl);
+        assert.ok(value.all(node => node.type === 'img' && node.props.src === 'data:image/png;base64,archive-thumbnail').length);
+        assert.equal(value.calls.archiveList.length, 1);
+        assert.equal(value.calls.archiveThumbnails.length, 1);
     } finally { value.close(); }
 });
 
@@ -2491,8 +2695,8 @@ test('the embedded worklist uses the shared table, plain status columns, and ind
         assert.deepEqual(nodes(table).filter(node => node.type === 'th').map(textContent), ['col_name', 'cover_editor_tool_page_count', 'col_size', 'tf_col_status', 'cover_editor_filename_preview', 'cover_editor_tool_remove']);
         assert.equal(value.all(node => node.props.className === 'cover-editor-file-detail-toggle').length, 0);
         assert.equal(value.all(node => node.props.className === 'cover-editor-file-badges').length, 0);
-        assert.deepEqual(childrenOf(fileButton(value, 'first.cbz')).map(textContent), ['first.cbz', '12', '1.5 MB', 'cover_editor_batch_ready', 'cover_editor_filename_preview', '']);
-        assert.deepEqual(childrenOf(fileButton(value, 'notes.txt')).map(textContent), ['notes.txt', '—', '1.5 MB', 'cover_editor_batch_ready', 'cover_editor_filename_preview', '']);
+        assert.deepEqual(childrenOf(fileButton(value, 'first.cbz')).map(textContent), ['first.cbz', '12', '1.5 MB', 'cover_editor_cover_required', 'cover_editor_filename_preview', '']);
+        assert.deepEqual(childrenOf(fileButton(value, 'notes.txt')).map(textContent), ['notes.txt', '—', '1.5 MB', 'cover_editor_cover_required', 'cover_editor_filename_preview', '']);
         const wrapper = () => value.all(node => node.props.className === 'renamer-table-wrapper cover-editor-file-table')[0];
         assert.equal(wrapper().props.tabIndex, 0);
         fileButton(value, 'notes.txt').props.onMouseDown(event({ button: 0, target: { closest: () => null } }));
@@ -2541,11 +2745,12 @@ test('removing the previewed row selects its neighbour and preserves the chosen 
             await value.settle();
             if (next) assert.equal(fileButton(value, next).props['aria-selected'], true);
             else assert.equal(value.currentImage(), undefined);
-            assert.equal(value.newImage().props.src, preview('/images/new.png').dataUrl);
+            if (next) assert.equal(value.newImage().props.src, preview('/images/new.png').dataUrl);
+            else assert.equal(value.newImage(), undefined);
             assert.deepEqual(value.calls.translations.filter(call => call.key === 'cover_editor_tool_total_files').at(-1).values, { count: files.length });
         }
         assert.deepEqual(value.calls.toggledFiles, []);
-        assert.deepEqual(value.calls.released, []);
+        assert.deepEqual(value.calls.released, [{ imagePath: '/images/new.png' }]);
     } finally { value.close(); }
 });
 
@@ -2579,7 +2784,7 @@ test('checking embedded targets preserves inspection and cover state and saves o
         assert.equal(value.calls.execute[0].mode, 'add');
         assert.equal(value.calls.execute[0].renumber, true);
         assert.ok(textContent(fileButton(value, 'book.cbz')).includes('cover_editor_status_saved'));
-        assert.ok(textContent(fileButton(value, 'notes.txt')).includes('cover_editor_batch_ready'));
+        assert.ok(textContent(fileButton(value, 'notes.txt')).includes('cover_editor_cover_assigned'));
         const completedLog = resultLogDialog(value).props.result;
         assert.equal(completedLog.stats.success.length, 1);
         assert.ok(completedLog.stats.success[0].includes('book.cbz'));
@@ -2613,7 +2818,7 @@ test('embedded saving is disabled for no checked files and batch requests exclud
         await value.settle();
         assert.deepEqual(value.calls.execute[0].map(request => request.filePath), ['/library/first.cbz', '/library/second.cbz']);
         assert.equal(value.calls.inspect.length, files.length);
-        assert.ok(textContent(fileButton(value, 'third.cbz')).includes('cover_editor_batch_ready'));
+        assert.ok(textContent(fileButton(value, 'third.cbz')).includes('cover_editor_cover_assigned'));
         assert.ok(textContent(fileButton(value, 'broken.cbz')).includes('cover_editor_batch_inspect_failed'));
     } finally { value.close(); }
 });
@@ -3012,7 +3217,7 @@ test('unchecked inspection failures stay in the list without changing the comple
     } finally { value.close(); }
 });
 
-test('adding, removing, and clearing embedded targets preserve the chosen cover and explicit save options', async () => {
+test('adding and removing files retain their folder cover, while clearing releases it and preserves save options', async () => {
     const value = await fixture({ embedded: true, files: [selectedFile('first.cbz')], inspect: path => fileInfo(path.split('/').at(-1)) });
     try {
         await value.browse();
@@ -3031,13 +3236,15 @@ test('adding, removing, and clearing embedded targets preserve the chosen cover 
         value.updateProps({ files: [] });
         await value.settle();
         assert.ok(value.text().includes('drag_drop'));
-        assert.equal(value.newImage().props.src, preview('/images/new.png').dataUrl);
+        assert.equal(value.newImage(), undefined);
         assert.equal(value.input('cover_editor_add').props.checked, true);
         assert.equal(value.input('cover_editor_renumber').props.checked, false);
         assert.equal(value.input('cover_editor_backup').props.checked, false);
-        assert.deepEqual(value.calls.released, []);
+        assert.deepEqual(value.calls.released, [{ imagePath: '/images/new.png' }]);
         value.updateProps({ files: [selectedFile('next.cbz')] });
         await value.settle();
+        assert.equal(value.button('cover_editor_save').props.disabled, true);
+        await value.browse();
         await value.button('cover_editor_save').props.onClick();
         assert.equal(value.calls.execute.length, 1);
         assert.equal(value.calls.execute[0].filePath, '/library/next.cbz');
@@ -3046,7 +3253,7 @@ test('adding, removing, and clearing embedded targets preserve the chosen cover 
         assert.equal(value.calls.execute[0].renumber, false);
         assert.equal(value.calls.execute[0].backup, false);
         value.unmount();
-        assert.deepEqual(value.calls.released, [undefined]);
+        assert.deepEqual(value.calls.released, [{ imagePath: '/images/new.png' }, undefined]);
     } finally { value.close(); }
 });
 

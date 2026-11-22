@@ -1,0 +1,57 @@
+.meta-search-settings-fields {
+    min-width: 0;
+}
+
+.meta-search-settings-fields .meta-search-settings-type:not(.settings-control-field) {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-top: 18px;
+    font-size: var(--font-sm);
+}
+
+.meta-search-settings-fields .meta-search-settings-type.settings-control-field {
+    margin-top: 18px;
+}
+
+.meta-search-settings-fields select:not(.settings-select) {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 12px;
+    color: inherit;
+    background: var(--bg-tertiary, #383838);
+    border: 1px solid var(--border-color, #555);
+    border-radius: 6px;
+    font: inherit;
+}
+
+.meta-search-settings-fields h3 {
+    margin: 0 0 6px;
+    font-size: var(--font-sm);
+}
+
+.meta-search-settings-fields p {
+    margin: 0 0 10px;
+    color: var(--text-secondary, #bbb);
+    font-size: var(--font-xs);
+    line-height: 1.6;
+}
+
+.meta-search-settings-fields .meta-search-settings-hint {
+    margin-top: 10px;
+}
+
+.meta-search-settings-fields section {
+    margin-top: 20px;
+}
+
+.meta-search-settings-fields .meta-tag-input {
+    min-height: 44px;
+    max-height: 130px;
+    overflow-y: auto;
+    background: var(--bg-tertiary, #383838);
+}
+
+.meta-search-settings-fields .meta-tag-input input {
+    width: auto;
+}

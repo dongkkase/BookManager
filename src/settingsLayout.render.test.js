@@ -37,7 +37,7 @@ async function until(predicate, message) {
     throw new Error(message);
 }
 const categories = ['basic', 'processing', 'folder', 'viewer', 'api', 'ttsApi', 'privacy', 'licenses'];
-const apiSections = ['preferred', 'providers', 'ai', 'tags', 'cache'];
+const apiSections = ['preferred', 'providers', 'ai', 'tags', 'filters', 'cache'];
 const providerSources = [
     '리디북스', '문피아', '한국웹툰', 'YES24', 'Google Books', 'Anilist', 'Vine',
     'Goodreads', 'Hardcover', 'Open Library', 'iTunes', 'Kobo', 'LubimyCzytac', 'RanobeDB',
@@ -157,7 +157,7 @@ function checkApiSection(id) {
     const submenu = document.querySelector('.settings-api-submenu');
     check(submenu && (submenu.tagName === 'NAV' || submenu.getAttribute('role') === 'navigation'), 'API sections need navigation semantics');
     check(tab('api').getAttribute('aria-expanded') === 'true', 'API category did not announce its expanded submenu');
-    check(submenu.querySelectorAll('button').length === apiSections.length, 'Expected five API sections');
+    check(submenu.querySelectorAll('button').length === apiSections.length, 'Expected six API sections');
     check(submenu.querySelectorAll('[aria-current="page"]').length === 1 && isApiSectionActive(id), 'API section selection is ambiguous: ' + id);
     for (const section of apiSections) {
         check(apiSection(section)?.tagName === 'BUTTON' && apiSection(section).tabIndex === (section === id ? 0 : -1), 'API section keyboard entry does not follow selection: ' + section);
@@ -168,6 +168,7 @@ function checkApiSection(id) {
         providers: '#settings-secret-hardcover',
         ai: '#settings-ai-provider',
         tags: '[aria-describedby="settings-tag-rules-help"]',
+        filters: '.meta-search-settings-fields',
         cache: '.settings-danger-btn',
     };
     for (const [section, selector] of Object.entries(sectionControls)) {
@@ -289,6 +290,15 @@ function checkLabels(context) {
 function checkInlineFields(context) {
     for (const control of document.querySelector('.settings-content').querySelectorAll('input, select')) {
         if (['checkbox', 'radio', 'hidden'].includes(control.type) || !control.getClientRects().length) continue;
+        const tagInput = control.closest('.meta-search-settings-fields .meta-tag-input');
+        if (tagInput) {
+            const fieldBounds = tagInput.getBoundingClientRect();
+            const controlBounds = control.getBoundingClientRect();
+            check(parseFloat(getComputedStyle(tagInput).borderTopWidth) >= 1, context + ': tag input border is missing');
+            check(controlBounds.width > 0 && controlBounds.left >= fieldBounds.left && controlBounds.right <= fieldBounds.right, context + ': tag input escaped its field');
+            check(tagInput.scrollWidth <= tagInput.clientWidth + 1, context + ': tag input overflows horizontally');
+            continue;
+        }
         const field = control.closest('.settings-control-field');
         check(field, context + ': input or select has no shared field border: ' + control.id);
         const associatedLabel = [...(control.labels || [])].find(label => label === field || field.contains(label));
@@ -349,6 +359,66 @@ async function applySettings(context) {
     await until(() => calls.saves.length === savesBefore + 1 && applyButton()?.disabled, context + ': apply did not finish with a clean draft');
     check(document.querySelector('.settings-modal-content') && calls.closes.length === closesBefore, context + ': applying settings closed the dialog');
     return calls.saves.at(-1);
+}
+async function runMetadataSearchSettingsInteractions() {
+    const savedSettings = {
+        comic: { excludedTitleTerms: ['특별 세트'], excludedResultTags: ['연재'], excludedTags: ['광고'] },
+        epub: { excludedTags: ['EPUB 전용'] },
+    };
+    const savedConfig = { ...baseline, metadata_search_settings: savedSettings };
+    const field = name => panel().querySelector('[data-search-setting="' + name + '"]');
+    const type = () => panel().querySelector('.meta-search-settings-type select');
+    const tags = name => [...field(name).querySelectorAll('.meta-tag-chip-text')].map(node => node.textContent);
+    const add = async (name, text) => {
+        const input = field(name).querySelector('input');
+        await change(input, text);
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        await frame();
+    };
+    await open({ config: savedConfig });
+    await navigate('api'); await navigateApiSection('filters');
+    check(tags('excludedTitleTerms').join() === '특별 세트' && tags('excludedTags').join() === '광고', 'Search dialog settings were not loaded');
+    check(applyButton().disabled, 'Viewing stored exclusions changed the draft');
+    await change(type(), 'epub');
+    check(tags('excludedTags').join() === 'EPUB 전용' && !tags('excludedResultTags').length, 'EPUB inherited comic rules');
+    await change(type(), 'txt');
+    check(!tags('excludedTags').length, 'TXT inherited EPUB rules');
+    await add('excludedTags', '임시 태그');
+    field('excludedTags').querySelector('.meta-tag-chip button').click();
+    await frame();
+    check(applyButton().disabled, 'Removing an unsaved tag left unchanged settings dirty');
+    await add('excludedTags', 'TXT 전용');
+    await navigateApiSection('preferred'); await navigateApiSection('filters');
+    await change(type(), 'txt');
+    check(tags('excludedTags').join() === 'TXT 전용', 'Menu navigation lost draft exclusions');
+    const beforeCancel = calls.saves.length;
+    document.querySelector('.settings-footer .btn-secondary').click();
+    await until(() => !document.querySelector('.settings-modal-content'), 'Cancel did not close settings');
+    check(calls.saves.length === beforeCancel && !savedSettings.txt, 'Cancel saved exclusions');
+    await open({ config: savedConfig });
+    await navigate('api'); await navigateApiSection('filters');
+    await change(type(), 'txt');
+    check(!tags('excludedTags').length, 'Cancelled exclusions were retained');
+    await add('excludedTags', 'TXT 전용');
+    await add('excludedTitleTerms', '합본');
+    let rejectSave;
+    nextSave = new Promise((_resolve, reject) => { rejectSave = reject; });
+    applyButton().click();
+    await frame();
+    check(type().disabled && field('excludedTags').querySelector('input').disabled, 'Exclusion fields stayed editable during save');
+    rejectSave(new Error('fixture exclusion save failure'));
+    await until(() => !applyButton().disabled, 'Failed exclusion save cannot be retried');
+    check(tags('excludedTags').join() === 'TXT 전용', 'Save failure discarded exclusions');
+    const saved = await applySettings('metadata search exclusions');
+    check(saved.metadata_search_settings.txt.excludedTags.join() === 'TXT 전용', 'TXT tags were not persisted');
+    check(saved.metadata_search_settings.txt.excludedTitleTerms.join() === '합본', 'TXT title exclusions were not persisted');
+    check(saved.metadata_search_settings.comic.excludedTitleTerms.join() === '특별 세트', 'Saving TXT discarded comic rules');
+    check(saved.metadata_search_settings.epub.excludedTags.join() === 'EPUB 전용', 'Saving TXT discarded EPUB rules');
+    await open({ config: saved });
+    await navigate('api'); await navigateApiSection('filters');
+    await change(type(), 'txt');
+    check(tags('excludedTags').join() === 'TXT 전용' && applyButton().disabled, 'Saved exclusions did not restore');
+    return { shared: true, perType: true, cancelled: true, retry: true };
 }
 async function runDataFolderInteractions() {
     await open();
@@ -1452,7 +1522,7 @@ async function runLibrarySetupInteractions() {
 }
 render();
 window.runDataFolderInteractions = runDataFolderInteractions;
-window.settingsLayoutTests = { runInteractions, runApplyInteractions, prepareProviderKeyboardToggle, checkProviderKeyboardToggle, runProviderInteractions, runLibraryPreviewInteractions, runLibraryEditorTransitions, prepareLibraryPointerSelection, checkLibraryPointerSelection, prepareLibraryEditorResize, checkLibraryEditorLayout, runLayout, navigate, navigateApiSection, selectPreview, openProviderHelp, closeProviderHelp, prepareLibrarySetup, runLibrarySetupInteractions };
+window.settingsLayoutTests = { runMetadataSearchSettingsInteractions, runInteractions, runApplyInteractions, prepareProviderKeyboardToggle, checkProviderKeyboardToggle, runProviderInteractions, runLibraryPreviewInteractions, runLibraryEditorTransitions, prepareLibraryPointerSelection, checkLibraryPointerSelection, prepareLibraryEditorResize, checkLibraryEditorLayout, runLayout, navigate, navigateApiSection, selectPreview, openProviderHelp, closeProviderHelp, prepareLibrarySetup, runLibrarySetupInteractions };
 `);
         await fs.writeFile(path.join(directory, 'index.html'), '<html><head></head><body style="margin:0"><div id="root" style="width:100%;height:100vh"></div><script type="module" src="/fixture.jsx"></script></body></html>');
         server = await createServer({
@@ -1482,6 +1552,10 @@ app.whenReady().then(async () => {
     }
     const interactions = await window.webContents.executeJavaScript('window.settingsLayoutTests.runInteractions()');
     const apply = await window.webContents.executeJavaScript('window.settingsLayoutTests.runApplyInteractions()');
+    const metadataSearch = await window.webContents.executeJavaScript('window.settingsLayoutTests.runMetadataSearchSettingsInteractions()');
+    if (${Boolean(process.env.BOOKMANAGER_SETTINGS_SCREENSHOTS)}) {
+        await fs.writeFile('/tmp/bookmanager-settings-search-exclusions.png', (await window.webContents.capturePage()).toPNG());
+    }
     await window.webContents.executeJavaScript('window.settingsLayoutTests.prepareProviderKeyboardToggle()');
     window.webContents.focus();
     for (const [keyCode, enabled] of [['Space', false], ['Enter', true]]) {
@@ -1592,7 +1666,7 @@ app.whenReady().then(async () => {
             }
         }
     }
-    console.log('SETTINGS_LAYOUT_RESULT=' + JSON.stringify({ dataFolder, interactions, apply, providers, libraryPreview, editorTransitions, editorReducedMotion, layouts, librarySetup }));
+    console.log('SETTINGS_LAYOUT_RESULT=' + JSON.stringify({ dataFolder, interactions, apply, metadataSearch, providers, libraryPreview, editorTransitions, editorReducedMotion, layouts, librarySetup }));
     app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });
 `);
@@ -1612,7 +1686,8 @@ app.whenReady().then(async () => {
         const report = JSON.parse(output.result.match(/SETTINGS_LAYOUT_RESULT=(.+)/)[1]);
         assert.deepEqual(report.dataFolder, { pathVisible: true, selectable: true, opened: true, failures: true, retry: true, settingsUnchanged: true });
         assert.equal(report.interactions.categories, 8);
-        assert.equal(report.interactions.apiSections, 5);
+        assert.equal(report.interactions.apiSections, 6);
+        assert.deepEqual(report.metadataSearch, { shared: true, perType: true, cancelled: true, retry: true });
         assert.equal(report.interactions.sourceGuides, 19);
         assert.equal(report.interactions.manualFocusChecks, 6);
         assert.deepEqual(report.apply, { initialClean: true, uiOnlyClean: true, revertedClean: true, duplicateBlocked: true, pendingEditsRetained: true, languageRetained: true, retry: true, fileAssociationGuards: true, partialBaseline: true });
@@ -1628,7 +1703,7 @@ app.whenReady().then(async () => {
         });
         assert.equal(report.layouts.length, 10);
         assert.deepEqual(report.librarySetup, { explicitSelection: true, initialFocus: true, cancellation: true, retry: true, savesAndCloses: true, ordinarySettingsUnchanged: true });
-        assert.ok(report.layouts.every(layout => layout.measurements.length === 12));
+        assert.ok(report.layouts.every(layout => layout.measurements.length === 13));
         t.diagnostic(JSON.stringify(report));
     } finally {
         await server?.close();

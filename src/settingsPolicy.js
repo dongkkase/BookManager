@@ -1,5 +1,6 @@
 import { normalizeMetadataApiSourceForBookType } from './metadataApiPolicy.js';
 import { normalizeMotionPreference } from './motionPolicy.js';
+import { normalizeMetadataSearchSettings } from './metadataSearchSettings.js';
 import { normalizeHardcoverToken, normalizeMetadataApiEnabled, normalizeMetadataProviderSettings } from '../electron/metadataProviderSettings.js';
 
 const FORMAT_KEYS = new Set(['none', 'zip', 'cbz', 'cbr', '7z']);
@@ -208,6 +209,7 @@ export function normalizeSettingsConfig(config = {}, coreCount = 4) {
         preferred_meta_api_audio: preferredAudioApi,
         metadata_providers: normalizeMetadataProviderSettings(config.metadata_providers),
         metadata_api_enabled: metadataApiEnabled,
+        metadata_search_settings: normalizeMetadataSearchSettings(config.metadata_search_settings),
         last_meta_api: String(config.last_meta_api || preferredComicApi || preferredBookApi || '').trim(),
         api_keys: normalizedApiKeys,
     };

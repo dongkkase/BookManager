@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CoverEditorDialog } from '../../../components/folder/CoverEditorDialog';
 import { droppedPathsFromDataTransfer, isFilePathDrag, normalizeDroppedPaths } from '../../../appShell';
 import { runCoverEditorBatch, supportsCoverEditor } from '../../../coverEditorBatch';
+import { coverEditorFolder } from '../../../coverEditorGroups';
 import { AUDIO_EXTENSIONS, COMIC_EXTENSIONS } from '../../../metadata/metadataTypes';
 import { applyCoverReadingAdjustment } from '../../../../electron/coverReadingState';
 import { createToolbarState, emitToolbarState } from '../../../toolbarState';
@@ -109,6 +110,42 @@ export default function CoverEditorTool({ config, saveConfig, t, showToast, onBa
                 while (mountedRef.current && pendingRequestsRef.current.length && !busyRef.current && !savingRef.current) {
                     const request = pendingRequestsRef.current[0];
                     if (request.source === 'folder' && collectingRef.current) break;
+                    if (request.source === 'folder' && !request.pathsResolved) {
+                        const requestId = ++fileRequestRef.current;
+                        const cancelled = () => !mountedRef.current || requestId !== fileRequestRef.current || busyRef.current || savingRef.current;
+                        collectingRef.current = true;
+                        setCollecting(true);
+                        try {
+                            const paths = [];
+                            let skipped = 0;
+                            for (const path of normalizeDroppedPaths(request.paths || [])) {
+                                const stat = await window.electronAPI.stat(path);
+                                if (cancelled()) break;
+                                if (stat?.isDirectory) {
+                                    paths.push(...await collectCoverEditorFolderPaths(path, directory => window.electronAPI.readDir(directory), cancelled));
+                                } else if (stat?.isFile) {
+                                    paths.push(path);
+                                } else {
+                                    skipped += 1;
+                                }
+                                if (cancelled()) break;
+                            }
+                            if (cancelled()) {
+                                pendingRequestsRef.current.shift();
+                                continue;
+                            }
+                            if (skipped) showToast?.({ key: 'cover_editor_tool_unsupported', values: [skipped] });
+                            request.paths = normalizeDroppedPaths(paths);
+                            request.pathsResolved = true;
+                        } catch (error) {
+                            if (!cancelled()) showToast?.({ key: 'cover_editor_tool_add_failed', values: [error.message] });
+                            pendingRequestsRef.current.shift();
+                            continue;
+                        } finally {
+                            collectingRef.current = false;
+                            if (mountedRef.current) setCollecting(false);
+                        }
+                    }
                     if (request.source === 'folder' && !request.addModeResolved && hasFiles
                         && normalizeDroppedPaths(request.paths || []).some(path => supportsCoverEditor(fileFromPath(path)))) {
                         const requestId = ++fileRequestRef.current;
@@ -195,6 +232,12 @@ export default function CoverEditorTool({ config, saveConfig, t, showToast, onBa
         if (busyRef.current || savingRef.current || collectingRef.current || choosingAddModeRef.current) return;
         fileRequestRef.current += 1;
         setFiles(current => current.filter(file => file.path !== path));
+    }, []);
+
+    const removeGroup = useCallback(groupKey => {
+        if (busyRef.current || savingRef.current || collectingRef.current || choosingAddModeRef.current) return;
+        fileRequestRef.current += 1;
+        setFiles(current => current.filter(file => coverEditorFolder(file.path).key !== groupKey));
     }, []);
 
     const clearFiles = useCallback(() => {
@@ -392,7 +435,7 @@ export default function CoverEditorTool({ config, saveConfig, t, showToast, onBa
             metadataApiEnabled={config?.metadata_api_enabled}
             preferences={preferences || config?.folder_cover_editor_options} onPreferencesChange={savePreferences}
             onExecute={execute} onClose={back} showToast={showToast} t={t}
-            onToggleFile={toggleFile} onToggleAll={toggleAll} onRemoveFile={removeFile}
+            onToggleFile={toggleFile} onToggleAll={toggleAll} onRemoveFile={removeFile} onRemoveGroup={removeGroup}
             localImageRequest={localImageRequest} onImageDropAvailabilityChange={handleImageDropAvailabilityChange}
             onBusyChange={handleBusyChange} onReset={reset} />
         {dragging && <FileDropHoverOverlay imageDrop={imageDrag} dropMode={dropMode} t={t} />}

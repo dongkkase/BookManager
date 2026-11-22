@@ -38,7 +38,7 @@ import { inspectFolderFile, scanFolder } from './tasks/folderScanTask.js';
 import { runFolderScanInWorker, shouldRunFolderScanInWorker } from './folderScanService.js';
 import { registerFolderDuplicateCheckIpc } from './folderDuplicateCheck.js';
 import { createFolderPreviewService } from './folderPreviewService.js';
-import { checkMissingVolumes } from './tasks/missingVolumesTask.js';
+import { runMissingVolumesInWorker } from './missingVolumesService.js';
 import { analyzeOrganizerInputs, executeOrganizer } from './tasks/organizerTask.js';
 import { analyzeRenamerInputs, executeRenamer, extractRenamerImage } from './tasks/renamerTask.js';
 import {
@@ -3443,11 +3443,11 @@ export function setupIPCHandlers(configManager, getExecutableDir, getResourcePat
         cancellationRegistry.cancel(event.sender.id, taskId);
         const controller = cancellationRegistry.start(event.sender.id, taskId);
         try {
-            return await checkMissingVolumes(libraryFolders, {
+            return await runMissingVolumesInWorker(libraryFolders, {
                 dbPath: libraryDbPath(),
                 indexOnly: options?.indexOnly === true,
                 shouldCancel: () => controller.shouldCancel(),
-            });
+            }, event);
         } catch (error) {
             if (error?.code === 'TASK_CANCELLED') {
                 return { missing: [], fileCount: 0, cancelled: true };
