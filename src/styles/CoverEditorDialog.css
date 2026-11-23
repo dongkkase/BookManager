@@ -1578,10 +1578,6 @@ body:has(.cover-editor-backdrop) .app-toast-layer {
     gap: 0;
 }
 
-.cover-editor-tool-main.has-split-size > .cover-editor-tool-files {
-    flex: 0 0 var(--cover-editor-list-height);
-}
-
 .cover-editor-tool-main.has-split-size .cover-editor-file-table {
     flex: 1 1 0;
     min-height: 90px;
@@ -1866,6 +1862,7 @@ body:has(.cover-editor-backdrop) .app-toast-layer {
 
 .cover-editor-tool-files .cover-editor-file-table {
     flex: 0 0 clamp(120px, 18vh, 156px);
+    contain: strict;
     border: 0;
     border-radius: 0;
 }

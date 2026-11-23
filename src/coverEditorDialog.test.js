@@ -858,6 +858,75 @@ test('folder groups keep distinct covers and save checked files even when their 
     } finally { value.close(); }
 });
 
+test('collapse and expand all preserve checks, covers, selection and save targets', async () => {
+    const files = ['A/one.cbz', 'B/two.cbz', 'A/three.cbz'].map(name => ({ ...selectedFile(name), name: name.split('/').at(-1) }));
+    const value = await fixture({ embedded: true, files, inspect: path => fileInfo(path.split('/').at(-1), { filePath: path }) });
+    const selectGroup = async path => {
+        value.all(node => node.props['data-cover-group'] === `/library/${path}`).flatMap(nodes)
+            .find(node => node.props.className === 'cover-editor-group-select').props.onClick();
+        await value.settle();
+    };
+    try {
+        await value.browse();
+        await selectGroup('B');
+        await value.browse();
+        const inspected = value.calls.inspect.length;
+        value.button('cover_editor_groups_collapse_all').props.onClick();
+        await value.settle();
+        assert.equal(value.all(node => node.props['data-cover-file']).length, 0);
+        assert.equal(value.button('cover_editor_groups_expand_all').props['aria-expanded'], false);
+        assert.equal(value.button('cover_editor_batch_save').props.disabled, false);
+        assert.equal(value.newImage().props.src, preview('/images/new.png').dataUrl);
+        value.button('cover_editor_groups_expand_all').props.onClick();
+        await value.settle();
+        assert.equal(value.all(node => node.props['data-cover-file']).length, files.length);
+        assert.equal(fileButton(value, 'two.cbz').props['aria-selected'], true);
+        assert.equal(value.calls.inspect.length, inspected);
+        assert.deepEqual(value.calls.toggledFiles, []);
+        assert.equal(value.calls.toggledAll, 0);
+        value.updateProps({ externalBusy: true });
+        assert.equal(value.button('cover_editor_groups_collapse_all').props.disabled, true);
+        value.button('cover_editor_groups_collapse_all').props.onClick();
+        await value.settle();
+        assert.equal(value.all(node => node.props['data-cover-file']).length, files.length);
+        value.updateProps({ externalBusy: false });
+        value.button('cover_editor_groups_collapse_all').props.onClick();
+        await value.settle();
+        await value.button('cover_editor_batch_save').props.onClick();
+        assert.deepEqual(value.calls.execute[0].map(request => request.filePath), files.map(file => file.full_path));
+    } finally { value.close(); }
+});
+
+test('selecting a group uses its folder title and selecting the same file restores its file title', async () => {
+    const files = ['Dr. Stone 1~12권/파일 제목 001화.cbz', '다른 그룹/다른 제목 제2권.cbz']
+        .map(name => ({ ...selectedFile(name), name: name.split('/').at(-1) }));
+    const value = await fixture({ embedded: true, files, inspect: path => fileInfo(path.split('/').at(-1), { filePath: path }) });
+    const query = () => value.all(node => node.props['aria-label'] === 'cover_editor_search_query')[0].props.value;
+    const groupControl = (path, className) => value.all(node => node.props['data-cover-group'] === `/library/${path}`).flatMap(nodes)
+        .find(node => node.props.className === className);
+    try {
+        value.button('cover_editor_source_metadata').props.onClick();
+        await value.settle();
+        assert.equal(query(), '파일 제목');
+        groupControl('Dr. Stone 1~12권', 'cover-editor-group-select').props.onClick();
+        await value.settle();
+        assert.equal(query(), 'Dr. Stone');
+        await selectEmbeddedFile(value, '파일 제목 001화.cbz');
+        assert.equal(query(), '파일 제목');
+        groupControl('다른 그룹', 'cover-editor-group-toggle').props.onClick();
+        groupControl('다른 그룹', 'cover-editor-group-select').props.onClick();
+        await value.settle();
+        assert.equal(query(), '다른 그룹');
+        assert.equal(fileButton(value, '다른 제목 제2권.cbz'), undefined);
+        groupControl('다른 그룹', 'cover-editor-group-toggle').props.onClick();
+        await value.settle();
+        const table = value.all(node => node.props.className === 'renamer-table-wrapper cover-editor-file-table')[0];
+        table.props.onKeyDown(event({ key: 'End', target: { tagName: 'DIV' } }));
+        await value.settle();
+        assert.equal(query(), '다른 제목');
+    } finally { value.close(); }
+});
+
 test('collapsed folder groups are skipped by keyboard navigation and keep their state when files are added', async () => {
     const files = ['A/one.cbz', 'B/two.cbz', 'A/three.cbz'].map(name => ({ ...selectedFile(name), name: name.split('/').at(-1) }));
     const value = await fixture({ embedded: true, files, inspect: path => fileInfo(path.split('/').at(-1), { filePath: path }) });
@@ -881,6 +950,28 @@ test('collapsed folder groups are skipped by keyboard navigation and keep their 
         await value.settle();
         assert.ok(fileButton(value, 'four.cbz'));
         assert.deepEqual(value.calls.toggledFiles, []);
+    } finally { value.close(); }
+});
+
+test('selecting the current file group discards pending results for the previous file search', async () => {
+    const pending = deferred();
+    const files = [{ ...selectedFile('폴더 제목 제2권/파일 제목 001화.cbz'), name: '파일 제목 001화.cbz' }];
+    const value = await fixture({ embedded: true, files, metadata: () => pending.promise,
+        inspect: path => fileInfo('파일 제목 001화.cbz', { filePath: path }) });
+    try {
+        value.button('cover_editor_source_metadata').props.onClick();
+        await value.settle();
+        searchForm(value).props.onSubmit(event());
+        await value.settle();
+        assert.ok(value.calls.metadata.length > 0);
+        value.all(node => node.props.className === 'cover-editor-group-select')[0].props.onClick();
+        await value.settle();
+        pending.resolve({ success: true, results: [{ ...metadataResult, title: 'Obsolete file search' }], hasNext: true });
+        await value.settle();
+        assert.equal(value.all(node => node.props['aria-label'] === 'cover_editor_search_query')[0].props.value, '폴더 제목');
+        assert.ok(!value.text().includes('Obsolete file search'));
+        assert.equal(value.button('cover_editor_metadata_next').props.disabled, true);
+        assert.equal(value.all(node => node.props['aria-label'] === 'cover_editor_metadata_loading').length, 0);
     } finally { value.close(); }
 });
 

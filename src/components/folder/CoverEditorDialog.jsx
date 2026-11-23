@@ -130,6 +130,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     const metadataRequestRef = useRef(0);
     const coverRequestRef = useRef(0);
     const selectedPathRef = useRef('');
+    const searchSelectionRef = useRef('');
     const inspectedFileKeyRef = useRef('');
     const lastLocalImageRequestRef = useRef(null);
     const mountedRef = useRef(true);
@@ -149,6 +150,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
     };
     const filePath = selectedEntry?.filePath || targets[0]?.full_path || targets[0]?.path || '';
     const groups = React.useMemo(() => groupCoverEditorEntries(entries), [entries]);
+    const allGroupsCollapsed = groups.length > 0 && groups.every(group => collapsedGroups[group.key]);
     const selectedGroup = coverEditorFolder(filePath);
     const individualCovers = options.coverScope === 'individual';
     const imageForFile = path => individualCovers ? images.files[path] || null
@@ -318,6 +320,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                 setCollapsedGroups(current => Object.fromEntries(Object.entries(current).filter(([key]) => targetGroups.has(key))));
             }
             if (!embedded || previousPath !== selectedPathRef.current) {
+                searchSelectionRef.current = `file:${selectedPathRef.current}`;
                 setSearchQuery(coverEditorSearchTitle(nextEntries[nextSelectedIndex]?.name));
                 setMetadataSearch(EMPTY_METADATA_SEARCH);
                 setMetadataLoading(false);
@@ -415,23 +418,27 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
         return () => { archiveRequestRef.current += 1; };
     }, [imageSource, filePath, info?.version, info?.canSelectArchiveImage]);
 
-    const selectEntry = async (entry, index) => {
+    const selectEntry = async (entry, index, group = null) => {
         if (busy) return;
         const requestId = ++coverRequestRef.current;
+        const searchSelection = group ? `group:${group.key}` : `file:${entry.filePath}`;
+        if (searchSelectionRef.current !== searchSelection) {
+            searchSelectionRef.current = searchSelection;
+            metadataRequestRef.current += 1;
+            setSearchQuery(coverEditorSearchTitle(group ? group.name : entry.name, { isFolder: Boolean(group) }));
+            setMetadataSearch(EMPTY_METADATA_SEARCH);
+            setMetadataLoading(false);
+        }
         if (selectedPathRef.current !== entry.filePath) {
             imageRequestRef.current += 1;
             setImageArrival(null);
             setArrivalHighlight(0);
             archiveRequestRef.current += 1;
-            metadataRequestRef.current += 1;
             setImageLoading(false);
             setArchiveImages({ entries: [], total: 0, offset: 0 });
             setArchiveLoading(false);
             setArchiveError('');
             setError('');
-            setSearchQuery(coverEditorSearchTitle(entry.name));
-            setMetadataSearch(EMPTY_METADATA_SEARCH);
-            setMetadataLoading(false);
         }
         selectedPathRef.current = entry.filePath;
         setSelectedIndex(index);
@@ -463,7 +470,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
         if (nextIndex < 0) return;
         event.preventDefault();
         const { entry, index } = visibleEntries[nextIndex];
-        if (index !== selectedIndex) void selectEntry(entry, index);
+        if (index !== selectedIndex || searchSelectionRef.current !== `file:${entry.filePath}`) void selectEntry(entry, index);
         fileRowRefs.current.get(entry.filePath)?.scrollIntoView?.({ block: 'nearest' });
     };
 
@@ -1064,7 +1071,10 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                                 <button type="button" className="cover-editor-group-select" disabled={busy}
                                     title={group.path} aria-pressed={selectedGroup.key === group.key}
                                     onClick={() => {
-                                        if (selectedGroup.key !== group.key) void selectEntry(group.entries[0].entry, group.entries[0].index);
+                                        if (searchSelectionRef.current !== `group:${group.key}`) {
+                                            const target = group.entries.find(({ index }) => index === selectedIndex) || group.entries[0];
+                                            void selectEntry(target.entry, target.index, group);
+                                        }
                                     }}
                                     onDoubleClick={() => {
                                         if (!busy) setCollapsedGroups(current => ({ ...current, [group.key]: !current[group.key] }));
@@ -1104,7 +1114,7 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                             onMouseDown={event => {
                                 if (event.button !== 0 || event.target.closest('input, button, textarea, select, a')) return;
                                 fileTableRef.current?.focus({ preventScroll: true });
-                                if (selectedIndex !== index) void selectEntry(entry, index);
+                                if (selectedIndex !== index || searchSelectionRef.current !== `file:${entry.filePath}`) void selectEntry(entry, index);
                             }}
                             onClick={event => {
                                 if (event.target.closest('input, button, textarea, select, a')) return;
@@ -1361,6 +1371,15 @@ export function CoverEditorDialog({ file, files, apiKeys = {}, metadataApiEnable
                 aria-pressed={allFilesChecked} disabled={busy || !targets.length || !onToggleAll}
                 onClick={() => { if (!busy && targets.length) onToggleAll?.(); }}>
                 <FaIcon name="checkSquare" aria-hidden="true" />{t('toggle_all')}
+            </button>}
+            {embedded && <button type="button" className="renamer-btn-toggle cover-editor-toggle-groups"
+                aria-expanded={groups.length > 0 && !allGroupsCollapsed} aria-controls={`${titleId}-files`}
+                disabled={busy || !groups.length}
+                onClick={() => {
+                    if (!busy && groups.length) setCollapsedGroups(allGroupsCollapsed ? {} : Object.fromEntries(groups.map(group => [group.key, true])));
+                }}>
+                <FaIcon name={allGroupsCollapsed ? 'angleDown' : 'angleUp'} aria-hidden="true" />
+                {t(allGroupsCollapsed ? 'cover_editor_groups_expand_all' : 'cover_editor_groups_collapse_all')}
             </button>}
             <fieldset className="cover-editor-options" disabled={busy || Boolean(result)} aria-label={embedded ? t('cover_editor_tool_options') : undefined}>
                 {!embedded && <legend className="cover-editor-section-title"><span aria-hidden="true">3</span>{t('cover_editor_operation')}</legend>}

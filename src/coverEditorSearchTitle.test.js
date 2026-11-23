@@ -41,3 +41,14 @@ test('cover search preserves numeric titles and numbers that are part of a title
         ['Book.cbz', 'Book'],
     ]) assert.equal(coverEditorSearchTitle(name), title, name);
 });
+
+test('folder search titles preserve dots and remove volume suffixes without stripping an extension', () => {
+    for (const [name, title] of [
+        ['별빛 여행 1~12권 (완결)', '별빛 여행'],
+        ['Book Vol. 03-04', 'Book'],
+        ['Dr. Stone', 'Dr. Stone'],
+        ['Dr. Stone 1권', 'Dr. Stone'],
+        ['1984', '1984'],
+        ['별빛 여행 제2권'.normalize('NFD'), '별빛 여행'],
+    ]) assert.equal(coverEditorSearchTitle(name, { isFolder: true }), title, name);
+});

@@ -7,9 +7,9 @@ const NUMBER_RANGE = String.raw`(?:제|第)?\s*${NUMBER}\s*${RANGE}\s*${NUMBER}\
 const ENGLISH_VOLUME = String.raw`(?<![A-Za-z])${VOLUME}\s*${NUMBER}(?:\s*${RANGE}\s*(?:${VOLUME}\s*)?${NUMBER})?`;
 const SUFFIX = new RegExp(String.raw`[\s_\-–—:]*[\[(]?\s*(?:${EPISODE}|${NUMBER_RANGE}|${ENGLISH_VOLUME})(?=$|[\s_\])[(])[\s\S]*$`, 'i');
 
-export function coverEditorSearchTitle(value) {
-    const name = String(value || '').normalize('NFC').split(/[\\/]/).pop().replace(/\.[^.]+$/, '').trim();
-    let title = name;
+export function coverEditorSearchTitle(value, { isFolder = false } = {}) {
+    const name = String(value || '').normalize('NFC').split(/[\\/]/).pop();
+    let title = (isFolder ? name : name.replace(/\.[^.]+$/, '')).trim();
     while (title) {
         const next = title.replace(SUFFIX, '').trim();
         if (!next || next === title) break;
